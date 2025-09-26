@@ -1,10 +1,5 @@
 
-This repository is a fork of mstrens/OSF
-which is a for of this "mbrusa" project https://github.com/emmebrusa/TSDZ2-Smart-EBike-860C that was developed for TSDZ2 Tongsheng motor when used with a 860C or SW102 display.
-
-i made this fork to test experimental shiz to save and share :)
-
-
+This repository is a fork of this "mbrusa" project https://github.com/emmebrusa/TSDZ2-Smart-EBike-860C that was developed for TSDZ2 Tongsheng motor when used with a 860C or SW102 display.
 
 The purpose here is to have a version that can be used on a TSDZ8 Tongsheng motor.
 
