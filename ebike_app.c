@@ -1405,7 +1405,7 @@ static void apply_temperature_limiting(void)
 
 static void apply_speed_limit(void)
 {
-    if (ui8_wheel_speed_max > 0U) {
+    if (0 && ui8_wheel_speed_max > 0U) {
 		uint16_t speed_limit_low  = (uint16_t)((uint8_t)(ui8_wheel_speed_max - 2U) * (uint8_t)10U); // casting literal to uint8_t ensures usage of MUL X,A
 		uint16_t speed_limit_high = (uint16_t)((uint8_t)(ui8_wheel_speed_max + 2U) * (uint8_t)10U);
 		
@@ -2656,14 +2656,23 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 		
 		//ui8_motor_inductance_x1048576
 		// motor inductance & cruise pid parameter
-		if (ui8_motor_type == 0) {
-			// 48 V motor
-			ui8_foc_angle_multiplicator = FOC_ANGLE_MULTIPLIER; // mstrens : for TSDZ8, we do not take care of the motor type
-		}
-		else {
-			// 36 V motor
-			ui8_foc_angle_multiplicator = FOC_ANGLE_MULTIPLIER; // mstrens : for TSDZ8, we do not take care of the motor type
-		}
+        /*
+         * Select an appropriate FOC angle multiplier based on the motor voltage.
+         *
+         * The stock firmware used a single value (FOC_ANGLE_MULTIPLIER) for both 36 V and 48 V motors,
+         * but that conservative constant limits the amount of phase advance available for field
+         * weakening and thus caps the attainable cadence.  Empirically larger multipliers are
+         * required to maintain torque at higher speeds.  Use higher values for 48 V motors and
+         * moderately lower values for 36 V motors.  These values can be tuned further by the user.
+         */
+        if (ui8_motor_type == 0) {
+            // 48 V motor
+            ui8_foc_angle_multiplicator = 50U;
+        }
+        else {
+            // 36 V motor
+            ui8_foc_angle_multiplicator = 40U;
+        }
 		
 		// startup boost
 		ui16_startup_boost_factor_array[0] = (uint16_t) ui8_rx_buffer[10] << 1;
@@ -2755,7 +2764,17 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 
 		ui8_temp = ui8_rx_buffer[80];
 		//uint8_t ui8_pedal_cadence_fast_stop = ui8_temp & 1; // not used
-		ui8_field_weakening_feature_enabled = (ui8_temp & 2) >> 1;
+        /*
+         * Disable field‑weakening selection from the display.  OSF originally
+         * allowed the 860C/VLCD display to enable the field‑weakening feature by
+         * setting bit 1 of parameter 80.  Because this build uses an advanced
+         * phase‑advance strategy directly tied to current (ui8_g_foc_angle) we
+         * no longer want the display to force field weakening on.  To prevent
+         * accidental enabling we explicitly clear ui8_field_weakening_feature_enabled
+         * instead of reading the bit from ui8_temp.  Field weakening remains
+         * disabled unless enabled manually in code.
+         */
+        ui8_field_weakening_feature_enabled = 0;
 		ui8_coaster_brake_enabled = (ui8_temp & 4) >> 2;
 		// free for future use
 

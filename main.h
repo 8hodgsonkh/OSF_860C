@@ -120,7 +120,7 @@
 //#define MOTOR_SPEED_FIELD_WEAKENING_MIN			490 // 90 rpm
 //#define ERPS_SPEED_OF_MOTOR_REENABLING				320 // 60 rpm
 //For TSDZ8, I expect that it must be 2 * smaller for the same mecanical speed (4 poles instead of 8)
-#define MOTOR_SPEED_FIELD_WEAKENING_MIN				245 // 90 rpm
+#define MOTOR_SPEED_FIELD_WEAKENING_MIN				200 // earlier FW engagement
 
 // for TSDZ8 is must be 2 * smaller (320 for TSDZ2 becomes 160)
 #define ERPS_SPEED_OF_MOTOR_REENABLING						160 // 60 rpm
@@ -272,11 +272,26 @@ HALL_COUNTER_OFFSET_UP:    29 -> 44
 //#define TORQUE_STEP_ADVANCED				1 // calibrated
 
 
-// adc current (38 = 6A, 50 = 8A, 112 = 18A, 124 = 20A , 136 = 22A, 143 = 23A, 187 = 30A)
-#define ADC_10_BIT_BATTERY_EXTRACURRENT				50  //  8 amps
-#define ADC_10_BIT_BATTERY_CURRENT_MAX				143	// 23 amps // 1 = 0.16 Amp
+// adc current (38 = 6 A, 50 = 8 A, 112 = 18 A, 124 = 20 A, 136 = 22 A, 143 = 23 A, 187 = 30 A)
+//
+// To support higher‑power builds the battery and motor current limits have been
+// increased.  Each ADC 10‑bit step corresponds to approximately 0.16 A.  The
+// original firmware limited the battery current to 23 A (143 steps) with an
+// additional 8 A (50 steps) allowance for over‑current protection, yielding a
+// trip at roughly 31 A.  To allow up to around 30 A continuous current while
+// keeping the same over‑current threshold the battery current maximum is
+// raised to 187 steps (≈30 A) and the extra current reduced to 6 steps (≈0.96 A).
+// The resulting trip point remains roughly unchanged at 193 steps (~31 A).
+#define ADC_10_BIT_BATTERY_EXTRACURRENT			6   // ≈0.96 A (keeps overcurrent at ~31 A)
+#define ADC_10_BIT_BATTERY_CURRENT_MAX			187	// ≈30 A (1 step = 0.16 A)
 
-#define ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX			187	// 30 amps // 1 = 0.16 Amp
+// The motor phase current limit is stored in an 8‑bit variable.  Values above
+// 255 cannot be represented without wider types.  To approximate a 50 A phase
+// current limit this constant is increased to 255 steps (≈40.8 A).  Achieving
+// a true 50 A limit (312 steps) would require changes throughout the code
+// (including variables typed as uint8_t) and is outside the scope of this
+// modification.
+#define ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX		255	// ≈40.8 A (max representable in 8 bits)
 /*---------------------------------------------------------
  NOTE: regarding ADC battery current max
 
