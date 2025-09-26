@@ -107,9 +107,10 @@ uint8_t ui8_foc_angle_multiplicator = 0;
  * that maximises ERPS while minimising current.  It does this by nudging the advance up or
  * down depending on whether the most recent change increased speed and/or decreased current.
  *
- * ADV_MIN / ADV_MAX: allowable range for advance (in 0…255 units ≈ 0…90° electrical).  A cap
- * around 18 (~25° electrical ≈ 12.5° mechanical for two pole pairs) is conservative for the
- * TSDZ8.  ADV_MIN is zero; negative advance is not recommended on this hardware.
+ * ADV_MIN / ADV_MAX: allowable range for advance (in signed 0…255 units ≈ −90…+90° electrical).
+ * A cap around 18 (~25° electrical ≈ 12.5° mechanical for two pole pairs) is conservative for
+ * the TSDZ8.  ADV_MIN now equals ADV_INIT, typically −10, so the optimiser may start with
+ * a small negative lead at stall.  Adjust ADV_INIT and ADV_MIN to change this offset.
  * STEP_UP / STEP_DN: how far to move the target on each successful/unsuccessful step.
  * I_HYST / ER_HYST: deadbands to ignore small changes in current or ERPS to reduce noise.
  * SLEW_UP_PER_TICK / SLEW_DN_PER_TICK: maximum change applied to the actual angle per
@@ -117,8 +118,27 @@ uint8_t ui8_foc_angle_multiplicator = 0;
  * DECIMATE_N: evaluate the optimisation logic only every N electrical rotations to allow the
  * system to settle between adjustments.
  */
-#define ADV_MIN                 0U
+// Base advance range definitions.
+//
+// We normally start the optimiser at a small negative lead to increase low‑end torque.  One
+// "count" in ui8_g_foc_angle corresponds to ~1.4° electrical, so a value of –10 counts
+// equates to approximately –14° electrical (≈ –10° mechanical for a two‑pole‑pair motor).
+// ADV_INIT defines this initial negative offset in counts.  The optimiser may increase
+// advance above this value up to ADV_MAX.  ADV_MIN is set equal to ADV_INIT so that
+// adv_target and adv_actual never drop below this starting point.  To revert to the
+// original behaviour (no negative lead), set ADV_INIT to 0.
+//
+// NOTE: Changing ADV_INIT below –10 is generally not recommended as too much retard can
+// destabilise the motor at start‑up.
+#define ADV_INIT                (-10)
+#define ADV_MIN                 ADV_INIT
 #define ADV_MAX                 18U
+// The original OSF build used:
+// #define ADV_MIN                 0U
+// #define ADV_MAX                 18U
+// but these are commented out here because we now allow a negative starting angle.  To
+// restore the original behaviour (zero or positive advance only), replace the above
+// definitions with the commented ones.
 #define STEP_UP                 1U
 #define STEP_DN                 1U
 #define I_HYST                  1U
@@ -128,8 +148,16 @@ uint8_t ui8_foc_angle_multiplicator = 0;
 #define DECIMATE_N              4U
 
 // State for the extremum‑seeking phase‑advance optimiser
-static uint8_t adv_target = 0U;     // desired FOC advance (0…ADV_MAX)
-static uint8_t adv_actual = 0U;     // slew‑limited applied FOC advance
+// adv_target and adv_actual are signed to permit negative advance values.  They start at
+// ADV_INIT (typically –10) so the motor begins with a small retarded lead.  Using signed
+// types also makes it straightforward to clamp the advance between ADV_MIN and adv_max_dynamic.
+// The original unsigned definitions looked like this:
+// static uint8_t adv_target = 0U;
+// static uint8_t adv_actual = 0U;
+// static int8_t  dir_hc = 1;
+// We keep them here as comments so it’s easy to revert if you wish to disable negative advance.
+static int8_t  adv_target = ADV_INIT;     // desired FOC advance (ADV_MIN…adv_max_dynamic)
+static int8_t  adv_actual = ADV_INIT;     // slew‑limited applied FOC advance
 static int8_t  dir_hc = 1;          // search direction: +1 = increasing advance, −1 = decreasing
 static uint8_t tick_ctr_hc = 0U;    // counter to decimate optimisation evaluations
 static uint16_t ER_prev_hc = 0U;    // previous ERPS snapshot
@@ -707,9 +735,12 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
                  *   adv_actual – the slew‑limited value applied to ui8_g_foc_angle.
                  * A dynamic maximum advance is derived from the display’s FOC multiplier
                  * (ui8_foc_angle_multiplicator).  The multiplier is scaled into the
-                 * [0, ADV_MAX] range so that increasing the multiplier allows more phase
-                 * advance and decreasing it restricts the optimiser’s headroom.  This
-                 * mapping exposes user control of the hill‑climb via the display.  The
+                 * [0, ADV_MAX] range.  Since ADV_MIN may be negative, this means the
+                 * dynamic maximum is still non‑negative: the optimiser can raise the
+                 * advance from its negative starting point through zero up to the limit.
+                 * Increasing the multiplier allows more positive phase advance and
+                 * decreasing it restricts the optimiser’s headroom.  This mapping
+                 * exposes user control of the hill‑climb via the display.  The
                  * hill‑climb logic itself remains: if a small increase in advance improves
                  * ERPS without raising current, we continue in the same direction; if it
                  * degrades speed or raises current, we reverse direction.  A decimation
@@ -725,12 +756,18 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
                      * so the optimiser can operate at low settings.  This value is used below
                      * to cap adv_target instead of the compile‑time ADV_MAX constant.
                      */
-                    uint8_t adv_max_dynamic;
+                    int8_t adv_max_dynamic;
                     {
                         uint16_t mult = (uint16_t)ui8_foc_angle_multiplicator;
                         if (mult > 50U) mult = 50U;
-                        adv_max_dynamic = (uint8_t)((mult * ADV_MAX) / 50U);
-                        if (mult > 0U && adv_max_dynamic < ADV_MIN) {
+                        // Scale the user multiplier into the 0…ADV_MAX range.  Cast to
+                        // int8_t to keep sign consistent with adv_target/adv_actual.  The
+                        // result is non‑negative because ADV_MAX is unsigned.
+                        adv_max_dynamic = (int8_t)((mult * (uint16_t)ADV_MAX) / 50U);
+                        // Ensure at least ADV_MIN counts of headroom when multiplier is non‑zero
+                        // (so the optimiser can always move).  If mult is zero, adv_max_dynamic
+                        // will be zero and adv_target will stay at ADV_INIT.
+                        if ((mult > 0U) && (adv_max_dynamic < ADV_MIN)) {
                             adv_max_dynamic = ADV_MIN;
                         }
                     }
@@ -756,27 +793,35 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
                         if (improvement > 0) {
                             // Continue in same direction
                             if (dir_hc > 0) {
-                                uint16_t tmp = (uint16_t)adv_target + STEP_UP;
-                                adv_target = (tmp > adv_max_dynamic) ? adv_max_dynamic : (uint8_t)tmp;
+                                // dir positive: step forward by STEP_UP, clamp to adv_max_dynamic
+                                int16_t tmp = (int16_t)adv_target + (int16_t)STEP_UP;
+                                if (tmp > (int16_t)adv_max_dynamic) adv_target = adv_max_dynamic;
+                                else adv_target = (int8_t)tmp;
                             } else {
-                                // dir negative: step backwards
-                                if (adv_target > STEP_DN) adv_target -= STEP_DN;
-                                else adv_target = ADV_MIN;
+                                // dir negative: step backward by STEP_DN, clamp to ADV_MIN
+                                int16_t tmp = (int16_t)adv_target - (int16_t)STEP_DN;
+                                if (tmp < (int16_t)ADV_MIN) adv_target = ADV_MIN;
+                                else adv_target = (int8_t)tmp;
                             }
                         } else if (improvement < 0) {
                             // Flip direction and step back
                             dir_hc = -dir_hc;
                             if (dir_hc > 0) {
-                                uint16_t tmp = (uint16_t)adv_target + STEP_UP;
-                                adv_target = (tmp > adv_max_dynamic) ? adv_max_dynamic : (uint8_t)tmp;
+                                // now moving forward: add STEP_UP with clamp
+                                int16_t tmp = (int16_t)adv_target + (int16_t)STEP_UP;
+                                if (tmp > (int16_t)adv_max_dynamic) adv_target = adv_max_dynamic;
+                                else adv_target = (int8_t)tmp;
                             } else {
-                                if (adv_target > STEP_DN) adv_target -= STEP_DN;
-                                else adv_target = ADV_MIN;
+                                // now moving backward: subtract STEP_DN with clamp
+                                int16_t tmp = (int16_t)adv_target - (int16_t)STEP_DN;
+                                if (tmp < (int16_t)ADV_MIN) adv_target = ADV_MIN;
+                                else adv_target = (int8_t)tmp;
                             }
                         } else {
-                            // Neutral zone: optional bias to reduce advance when duty is max and current rising
+                            // Neutral zone: optional bias to reduce advance when duty is max and current rising.
+                            // Only reduce if above ADV_MIN to avoid dropping below the starting negative lead.
                             if ((ui8_g_duty_cycle >= PWM_DUTY_CYCLE_MAX) && (dI > 0)) {
-                                if (adv_target > 0U) adv_target--;
+                                if (adv_target > ADV_MIN) adv_target--;
                             }
                         }
                         // Save for next iteration
@@ -787,8 +832,11 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
                     int16_t delta = (int16_t)adv_target - (int16_t)adv_actual;
                     if (delta > (int16_t)SLEW_UP_PER_TICK) delta = (int16_t)SLEW_UP_PER_TICK;
                     if (delta < -(int16_t)SLEW_DN_PER_TICK) delta = -(int16_t)SLEW_DN_PER_TICK;
-                    adv_actual = (uint8_t)((int16_t)adv_actual + delta);
-                    ui8_g_foc_angle = adv_actual;
+                    adv_actual = (int8_t)((int16_t)adv_actual + delta);
+                    // Convert signed angle to unsigned for lookup table indexing.  Negative
+                    // values wrap into [246…255] so that the underlying SVM logic
+                    // interprets them as phase retarding offsets.
+                    ui8_g_foc_angle = (uint8_t)adv_actual;
                 }
             }
         } else { // duty cycle = 0
