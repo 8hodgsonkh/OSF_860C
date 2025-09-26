@@ -2491,17 +2491,36 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 					/ ui16_battery_voltage_filtered_x1000;
 			uint8_t ui8_adc_battery_current_max_temp_2 = ui32_battery_current_max_x100 / BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100;
 
-			// set max battery current
-			ui8_adc_battery_current_max = ui8_min(ui8_adc_battery_current_max_temp_1, ui8_adc_battery_current_max_temp_2);
-			// set max motor phase current
-			ui16_temp = (uint16_t)(ui8_adc_battery_current_max * ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX);
-			ui16_adc_motor_phase_current_max = (uint8_t)(ui16_temp / ADC_10_BIT_BATTERY_CURRENT_MAX);
-			// limit max motor phase current if higher than configured hardware limit (safety)
-			if (ui16_adc_motor_phase_current_max > ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX) {
-			ui16_adc_motor_phase_current_max = ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX;
-			}
-			// set limit battery overcurrent
-			ui8_adc_battery_overcurrent = ui8_adc_battery_current_max + ADC_10_BIT_BATTERY_EXTRACURRENT;
+            // set max battery current
+            ui8_adc_battery_current_max = ui8_min(ui8_adc_battery_current_max_temp_1, ui8_adc_battery_current_max_temp_2);
+
+            // set max motor phase current based on battery current and hardware limits
+            ui16_temp = (uint16_t)(ui8_adc_battery_current_max * ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX);
+            ui16_adc_motor_phase_current_max = (uint8_t)(ui16_temp / ADC_10_BIT_BATTERY_CURRENT_MAX);
+            // limit max motor phase current if higher than configured hardware limit (safety)
+            if (ui16_adc_motor_phase_current_max > ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX) {
+                ui16_adc_motor_phase_current_max = ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX;
+            }
+
+            /*
+             * Repurpose the unused 860C field "Torque angle adj" (ui8_adc_pedal_torque_angle_adj) to scale the
+             * maximum phase current.  This field ranges from 0 to 40 and previously had no effect on TSDZ8 firmware.
+             * We map it to a scaling factor in the range [0.5, 1.0], such that 0 corresponds to half the
+             * nominal phase‑current limit and 40 corresponds to the full nominal limit.  The calculation below
+             * implements: new_max = current_max * (40 + adj) / 80.  Values beyond the hardware limit
+             * (ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX) are clamped.
+             */
+            {
+                uint32_t ui32_phase_scale_num = (uint32_t)40 + ui8_adc_pedal_torque_angle_adj;
+                uint16_t ui16_phase_current_scaled = (uint16_t)((uint32_t)ui16_adc_motor_phase_current_max * ui32_phase_scale_num / 80U);
+                if (ui16_phase_current_scaled > ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX) {
+                    ui16_phase_current_scaled = ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX;
+                }
+                ui16_adc_motor_phase_current_max = ui16_phase_current_scaled;
+            }
+
+            // set limit battery overcurrent
+            ui8_adc_battery_overcurrent = ui8_adc_battery_current_max + ADC_10_BIT_BATTERY_EXTRACURRENT;
 		}
 		
 		// walk assist parameter
@@ -2639,10 +2658,13 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 		// wheel perimeter
 		ui16_wheel_perimeter = (((uint16_t) ui8_rx_buffer[6]) << 8) + ((uint16_t) ui8_rx_buffer[5]);
 
-		// battery max current
-		//ebike_app_set_battery_max_current(ui8_rx_buffer[7]);
-		ui8_battery_current_max = ui8_rx_buffer[7];
-		ui8_target_battery_max_power_div25_temp = 0;
+        // battery max current
+        // We intentionally ignore the battery current value sent by the display (ui8_rx_buffer[7])
+        // and keep using the firmware default (DEFAULT_VALUE_BATTERY_CURRENT_MAX) defined in main.h.
+        // This prevents the display from lowering our battery current limit below the hardware setting.
+        // ui8_battery_current_max = ui8_rx_buffer[7];
+        // reset the power limit temp so that ui8_adc_battery_current_max will be recomputed using our default
+        ui8_target_battery_max_power_div25_temp = 0;
 
 		ui8_temp = ui8_rx_buffer[8];
 		ui8_startup_boost_enabled = ui8_temp & 1;

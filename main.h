@@ -330,7 +330,7 @@ HALL_COUNTER_OFFSET_UP:    29 -> 44
 
 
 // default values
-#define DEFAULT_VALUE_BATTERY_CURRENT_MAX  10  // 10 amps Used only in 860C version
+#define DEFAULT_VALUE_BATTERY_CURRENT_MAX  30  // default battery current limit (amps).  Set higher to use full hardware limit.  See ebike_app.c for how display values are ignored.
 
 /*---------------------------------------------------------
 
