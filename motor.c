@@ -71,7 +71,6 @@ uint8_t ui8_hall_360_ref_valid = 0; // fill with a hall pattern to check sequenc
 uint8_t ui8_motor_commutation_type = BLOCK_COMMUTATION;
 static uint8_t ui8_motor_phase_absolute_angle = 0;
 volatile uint16_t ui16_hall_counter_total = 0xffff; // number of tim3 ticks between 2 rotations// inTSDZ2 it was a u16
-static uint16_t ui16_hall_counter_total_previous = 0;  // used to check if erps is stable
 // power variables
 volatile uint8_t ui8_controller_duty_cycle_ramp_up_inverse_step = PWM_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_DEFAULT; // 194
 volatile uint8_t ui8_controller_duty_cycle_ramp_down_inverse_step = PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_DEFAULT; // 73
@@ -87,11 +86,11 @@ volatile uint8_t ui8_fw_hall_counter_offset_max = 0;
 volatile uint8_t ui8_field_weakening_enabled = 0;
 
 // Duty cycle ramp up
-static uint8_t ui8_counter_duty_cycle_ramp_up = 0;
-static uint8_t ui8_counter_duty_cycle_ramp_down = 0;
+// Legacy ramp counters existed here in the block‑commutation implementation.  They are no
+// longer used by the current FOC duty‑cycle regulator and retaining the zero‑initialised
+// globals caused "defined but not used" warnings with modern GCC.  The explanatory comment
+// remains to document why the counters disappeared from the build.
 
-// FOC angle
-static uint8_t ui8_foc_angle_accumulated = 0;
 /*
  * ui8_foc_flag is set once per electrical rotation (when hall pattern 0x03 is detected).
  * We no longer repurpose this flag to carry the phase‑advance value.  Instead it acts solely
@@ -198,12 +197,6 @@ volatile uint8_t ui8_brake_state = 0;
 // cadence sensor
 #define NO_PAS_REF 5
 volatile uint16_t ui16_cadence_sensor_ticks = 0;
-static uint16_t ui16_cadence_sensor_ticks_counter_min = CADENCE_SENSOR_CALC_COUNTER_MIN; // initialiszed at 4270 , then varies with wheelSpeed
-static uint8_t ui8_pas_state_old = 4;
-static uint16_t ui16_cadence_calc_counter = 0;
-static uint16_t ui16_cadence_stop_counter = 0;
-static uint8_t ui8_cadence_calc_ref_state = NO_PAS_REF;
-const static uint8_t ui8_pas_old_valid_state[4] = { 0x01, 0x03, 0x00, 0x02 };
 //added by mstrens
 uint8_t ui8_pas_counter = 0; // counter to detect a full pedal rotation (after 20 valid transitions)
 
