@@ -19,6 +19,7 @@
 #endif 
 
 #include "adc.h"
+#include "phase_current.h"
 
 #if(uCPROBE_GUI_OSCILLOSCOPE == MY_ENABLED)
 #include "ProbeScope/probe_scope.h"
@@ -232,7 +233,8 @@ int main(void)
 
 
     // mstrens : we configure vadc with infineon init instead of with bsp
-    pmsm_adc_module_init(); 
+    pmsm_adc_module_init();
+    phase_offsets_calibrate_idle();
 
     /*
     //Here I overwite the config defined in device manage (and generated in cycfg_peripherals.c)     
