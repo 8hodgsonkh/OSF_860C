@@ -162,6 +162,15 @@ static float id_int = 0.0f, iq_int = 0.0f;
 static float id_ref = 0.0f, iq_ref = 0.0f;
 static float vd_est_prev = 0.0f, vq_est_prev = 0.0f;
 static uint8_t foc_subsample = 0U;
+static uint8_t foc_svm_angle = 0U; // most recent SVM lookup angle
+
+// Extremum‑seeking optimiser state (hill‑climb controller)
+static int8_t  adv_target = ADV_INIT;  // desired FOC advance (ADV_MIN…adv_max_dynamic)
+static int8_t  adv_actual = ADV_INIT;  // slew‑limited applied FOC advance
+static int8_t  dir_hc = 1;             // search direction: +1 increasing, −1 decreasing
+static uint8_t tick_ctr_hc = 0U;       // decimation counter for optimiser updates
+static uint16_t ER_prev_hc = 0U;       // previous ERPS sample
+static uint8_t I_prev_hc = 0U;         // previous current sample (ADC units)
 
 #ifndef TWO_PI_F
 #define TWO_PI_F (6.28318530717958647692f)
@@ -618,12 +627,20 @@ __RAM_FUNC void CCU80_0_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
 
     uint8_t rotor_angle_counts = ui8_interpolation_angle + ui8_motor_phase_absolute_angle +
                                  hall_reference_angle + FINE_TUNE_ANGLE_OFFSET;
-    float theta_e = (float)rotor_angle_counts * (TWO_PI_F / 256.0f);
+    uint8_t rotor_angle_with_adv = (uint8_t)((int16_t)rotor_angle_counts + (int16_t)adv_actual);
+    float theta_e = (float)rotor_angle_with_adv * (TWO_PI_F / 256.0f);
     float sin_theta = sinf(theta_e);
     float cos_theta = cosf(theta_e);
 
     if ((ui8_motor_commutation_type == BLOCK_COMMUTATION) || (!ui8_motor_enabled)) {
-        ui8_g_foc_angle = rotor_angle_counts;
+        adv_target = ADV_INIT;
+        adv_actual = ADV_INIT;
+        dir_hc = 1;
+        tick_ctr_hc = 0U;
+        ER_prev_hc = ui16_motor_speed_erps;
+        I_prev_hc = ui8_adc_battery_current_filtered;
+        ui8_g_foc_angle = 0;
+        rotor_angle_with_adv = (uint8_t)((int16_t)rotor_angle_counts + (int16_t)adv_actual);
         ui8_controller_duty_cycle_target = 0;
         id_ref = 0.0f;
         iq_ref = 0.0f;
@@ -632,6 +649,7 @@ __RAM_FUNC void CCU80_0_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
         vd_est_prev = 0.0f;
         vq_est_prev = 0.0f;
         foc_subsample = 0U;
+        foc_svm_angle = rotor_angle_with_adv;
         ui16_adc_motor_phase_current = 0;
     } else {
         foc_subsample ^= 1U;
@@ -688,7 +706,7 @@ __RAM_FUNC void CCU80_0_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
                 angle += TWO_PI_F;
             }
             uint8_t angle_counts = (uint8_t)lroundf(angle * (256.0f / TWO_PI_F));
-            ui8_g_foc_angle = angle_counts;
+            foc_svm_angle = angle_counts;
 
             float mod_idx = sqrtf(valpha * valpha + vbeta * vbeta);
             float duty_norm = (vlim > 0.0f) ? fminf(mod_idx, vlim) / vlim : 0.0f;
@@ -702,9 +720,103 @@ __RAM_FUNC void CCU80_0_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
             }
             ui16_adc_motor_phase_current = (uint16_t)phase_current_adc;
         }
-    }
 
-    uint8_t ui8_svm_table_index = ui8_g_foc_angle;
+        if (ui8_g_duty_cycle > 0) {
+            if (ui8_foc_flag) {
+                int8_t adv_max_dynamic;
+                uint16_t mult = (uint16_t)ui8_foc_angle_multiplicator;
+                if (mult > 50U) {
+                    mult = 50U;
+                }
+                adv_max_dynamic = (int8_t)((mult * (uint16_t)ADV_MAX) / 50U);
+                if ((mult > 0U) && (adv_max_dynamic < ADV_MIN)) {
+                    adv_max_dynamic = ADV_MIN;
+                }
+
+                tick_ctr_hc++;
+                if (tick_ctr_hc >= DECIMATE_N) {
+                    tick_ctr_hc = 0U;
+                    uint16_t ER = ui16_motor_speed_erps;
+                    uint8_t I = ui8_adc_battery_current_filtered;
+                    int16_t dER = (int16_t)ER - (int16_t)ER_prev_hc;
+                    int16_t dI = (int16_t)I - (int16_t)I_prev_hc;
+                    if (dER > -(int16_t)ER_HYST && dER < (int16_t)ER_HYST) {
+                        dER = 0;
+                    }
+                    if (dI > -(int16_t)I_HYST && dI < (int16_t)I_HYST) {
+                        dI = 0;
+                    }
+                    int8_t improvement = 0;
+                    if ((dER > 0) && (dI <= 0)) {
+                        improvement = 1;
+                    }
+                    else if ((dER < 0) && (dI >= 0)) {
+                        improvement = -1;
+                    }
+
+                    if (improvement > 0) {
+                        if (dir_hc > 0) {
+                            int16_t tmp = (int16_t)adv_target + (int16_t)STEP_UP;
+                            if (tmp > (int16_t)adv_max_dynamic) {
+                                adv_target = adv_max_dynamic;
+                            } else {
+                                adv_target = (int8_t)tmp;
+                            }
+                        } else {
+                            int16_t tmp = (int16_t)adv_target - (int16_t)STEP_DN;
+                            if (tmp < (int16_t)ADV_MIN) {
+                                adv_target = ADV_MIN;
+                            } else {
+                                adv_target = (int8_t)tmp;
+                            }
+                        }
+                    } else if (improvement < 0) {
+                        dir_hc = (int8_t)-dir_hc;
+                        if (dir_hc > 0) {
+                            int16_t tmp = (int16_t)adv_target + (int16_t)STEP_UP;
+                            if (tmp > (int16_t)adv_max_dynamic) {
+                                adv_target = adv_max_dynamic;
+                            } else {
+                                adv_target = (int8_t)tmp;
+                            }
+                        } else {
+                            int16_t tmp = (int16_t)adv_target - (int16_t)STEP_DN;
+                            if (tmp < (int16_t)ADV_MIN) {
+                                adv_target = ADV_MIN;
+                            } else {
+                                adv_target = (int8_t)tmp;
+                            }
+                        }
+                    } else {
+                        if ((ui8_g_duty_cycle >= PWM_DUTY_CYCLE_MAX) && (dI > 0)) {
+                            if (adv_target > ADV_MIN) {
+                                adv_target--;
+                            }
+                        }
+                    }
+
+                    ER_prev_hc = ER;
+                    I_prev_hc = I;
+                }
+
+                int16_t delta = (int16_t)adv_target - (int16_t)adv_actual;
+                if (delta > (int16_t)SLEW_UP_PER_TICK) {
+                    delta = (int16_t)SLEW_UP_PER_TICK;
+                }
+                if (delta < -(int16_t)SLEW_DN_PER_TICK) {
+                    delta = -(int16_t)SLEW_DN_PER_TICK;
+                }
+                adv_actual = (int8_t)((int16_t)adv_actual + delta);
+            }
+            ui8_g_foc_angle = (uint8_t)adv_actual;
+        } else {
+            ui16_adc_motor_phase_current = 0;
+            ui8_g_foc_angle = 0;
+        }
+    }
+    ui8_foc_flag = 0;
+
+    uint8_t ui8_svm_table_index = foc_svm_angle;
     // Phase A is advanced 240 degrees over phase B
     ui16_temp = ui16_svm_table[(uint8_t) (ui8_svm_table_index + 171)]; // 171 = 240 deg when 360° is coded as 256
     if (ui16_temp > MIDDLE_SVM_TABLE) { // 214 at 19 khz
