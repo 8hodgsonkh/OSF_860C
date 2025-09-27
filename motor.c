@@ -12,6 +12,9 @@
 #include "ebike_app.h"
 #include "common.h"
 #include "adc.h"
+#include "foc_config.h"
+#include "phase_current.h"
+#include "foc_math.h"
 
 #include "cy_retarget_io.h"
 //#include "cy_utils.h"
@@ -156,12 +159,14 @@ uint8_t ui8_foc_angle_multiplicator = 0;
 // static uint8_t adv_actual = 0U;
 // static int8_t  dir_hc = 1;
 // We keep them here as comments so it’s easy to revert if you wish to disable negative advance.
-static int8_t  adv_target = ADV_INIT;     // desired FOC advance (ADV_MIN…adv_max_dynamic)
-static int8_t  adv_actual = ADV_INIT;     // slew‑limited applied FOC advance
-static int8_t  dir_hc = 1;          // search direction: +1 = increasing advance, −1 = decreasing
-static uint8_t tick_ctr_hc = 0U;    // counter to decimate optimisation evaluations
-static uint16_t ER_prev_hc = 0U;    // previous ERPS snapshot
-static uint8_t I_prev_hc = 0U;      // previous current snapshot (ADC units)
+static float id_int = 0.0f, iq_int = 0.0f;
+static float id_ref = 0.0f, iq_ref = 0.0f;
+static float vd_est_prev = 0.0f, vq_est_prev = 0.0f;
+static uint8_t foc_subsample = 0U;
+
+#ifndef TWO_PI_F
+#define TWO_PI_F (6.28318530717958647692f)
+#endif
 
 /*
  * The measured electrical rotations per second (ERPS) comes from ebike_app.c.  It is
@@ -437,11 +442,15 @@ __RAM_FUNC void CCU80_0_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
     //ui32_adc_battery_current_15b = ((XMC_VADC_GROUP_GetResult(vadc_0_group_0_HW , 15 ) & 0xFFFF) +
     //                                (XMC_VADC_GROUP_GetResult(vadc_0_group_1_HW , 15 ) & 0xFFFF)) ;  // So here result is in 15 bits (averaging
     // changed when using infineon init for vadc (result in 12bits and in ch 1)
-    ui32_adc_battery_current_15b = (XMC_VADC_GROUP_GetResult(vadc_0_group_0_HW , VADC_I4_RESULT_REG ) & 0xFFFF) <<3; // change from 12 to 15 digits 
+    ui32_adc_battery_current_15b = (XMC_VADC_GROUP_GetResult(vadc_0_group_0_HW , VADC_I4_RESULT_REG ) & 0xFFFF) <<3; // change from 12 to 15 digits
     //accumulate the current to calculate an average on one rotation (there are quite big variations inside each 60° sector)
     ui32_adc_battery_current_15b_accum += ui32_adc_battery_current_15b;
     ui32_adc_battery_current_15b_counter++;
-	ui32_adc_battery_current_15b_moving_average = update_moving_average(ui32_adc_battery_current_15b);
+        ui32_adc_battery_current_15b_moving_average = update_moving_average(ui32_adc_battery_current_15b);
+
+    adc_raw_a = (uint16_t)(XMC_VADC_GROUP_GetResult(VADC_I1_GROUP, VADC_I1_RESULT_REG) & 0x0FFF);
+    adc_raw_b = (uint16_t)(XMC_VADC_GROUP_GetResult(VADC_I2_GROUP, VADC_I2_RESULT_REG) & 0x0FFF);
+    adc_raw_c = (uint16_t)(XMC_VADC_GROUP_GetResult(VADC_I3_GROUP, VADC_I3_RESULT_REG) & 0x0FFF);
 
     
     // to see on prove scope oscillo
@@ -614,26 +623,95 @@ __RAM_FUNC void CCU80_0_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
     }
 
 
-    // ------------ Calculate the rotor angle and use it as index in the table----------------- 
-    // to compare the 2 algorithm
-//    if (new_hall_pattern == 5){ // calculate only for one to make it easier to compare.
-//        ui8_svm_old = ui8_interpolation_angle + ui8_motor_phase_absolute_angle ; 
-//        ui8_svm_new = ui8_interpolation_angle_new + (ui32_ref_angle >> 16) +  ui8_best_ref_angles[1];
-//    }
-//    #if (APPLY_ENHANCED_POSITIONING == 0)
-    // hall_reference_angle is the sum of the DEFAULT_HALL_REFERENCE_ANGLE and the fine tune with m_config.global_offset_angle
-    uint8_t ui8_svm_table_index = ui8_interpolation_angle + ui8_motor_phase_absolute_angle +
-             ui8_g_foc_angle + hall_reference_angle + FINE_TUNE_ANGLE_OFFSET;
-    // to test without foc_angle
-    //uint8_t ui8_svm_table_index = ui8_interpolation_angle + ui8_motor_phase_absolute_angle + hall_reference_angle + FINE_TUNE_ANGLE_OFFSET;
-    
-    
-    // to debug
-//    #else
-//    uint8_t ui8_svm_table_index = ui8_interpolation_angle_new + (ui32_ref_angle >> 16) +  ui8_best_ref_angles[1] + 
-//        ui8_g_foc_angle + hall_reference_angle ;
-    
-//    #endif
+    uint8_t rotor_angle_counts = ui8_interpolation_angle + ui8_motor_phase_absolute_angle +
+                                 hall_reference_angle + FINE_TUNE_ANGLE_OFFSET;
+    float theta_e = (float)rotor_angle_counts * (TWO_PI_F / 256.0f);
+    float sin_theta = sinf(theta_e);
+    float cos_theta = cosf(theta_e);
+
+    if ((ui8_motor_commutation_type == BLOCK_COMMUTATION) || (!ui8_motor_enabled)) {
+        ui8_g_foc_angle = rotor_angle_counts;
+        ui8_controller_duty_cycle_target = 0;
+        id_ref = 0.0f;
+        iq_ref = 0.0f;
+        id_int = 0.0f;
+        iq_int = 0.0f;
+        vd_est_prev = 0.0f;
+        vq_est_prev = 0.0f;
+        foc_subsample = 0U;
+        ui16_adc_motor_phase_current = 0;
+    } else {
+        foc_subsample ^= 1U;
+        if (foc_subsample) {
+            float ia, ib, ic;
+            phase_to_amps(&ia, &ib, &ic);
+
+            float ialpha, ibeta, id, iq;
+            clarke(ia, ib, ic, &ialpha, &ibeta);
+            park(ialpha, ibeta, sin_theta, cos_theta, &id, &iq);
+
+            const float battery_step_a = ((float)BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) / 100.0f;
+            float iq_cmd = (float)ui8_controller_adc_battery_current_target * battery_step_a;
+            if (!ui8_motor_enabled) {
+                iq_cmd = 0.0f;
+            }
+            iq_ref = fminf(fmaxf(iq_cmd, -IQ_MAX_A), IQ_MAX_A);
+
+            float vmag_prev = sqrtf(vd_est_prev * vd_est_prev + vq_est_prev * vq_est_prev);
+            if (vmag_prev > FW_ENABLE_RATIO) {
+                id_ref = fmaxf(id_ref - FW_ID_STEP_A, ID_FW_MIN_A);
+            } else {
+                id_ref = 0.0f;
+            }
+
+            float err_d = id_ref - id;
+            float err_q = iq_ref - iq;
+
+            id_int += err_d;
+            iq_int += err_q;
+
+            float we = TWO_PI_F * (float)ui16_motor_speed_erps;
+            float vd = ID_KP * err_d + ID_KI * id_int - we * L_PHASE_HENRY * iq;
+            float vq = IQ_KP * err_q + IQ_KI * iq_int + we * L_PHASE_HENRY * id + R_PHASE_OHM * iq;
+
+            float vmag = sqrtf(vd * vd + vq * vq);
+            const float vlim = VDQV_MAX_V;
+            if (vmag > vlim) {
+                float scale = vlim / vmag;
+                vd *= scale;
+                vq *= scale;
+                id_int -= err_d;
+                iq_int -= err_q;
+            }
+
+            vd_est_prev = vd;
+            vq_est_prev = vq;
+
+            float valpha, vbeta;
+            inv_park(vd, vq, sin_theta, cos_theta, &valpha, &vbeta);
+
+            float angle = atan2f(vbeta, valpha);
+            if (angle < 0.0f) {
+                angle += TWO_PI_F;
+            }
+            uint8_t angle_counts = (uint8_t)lroundf(angle * (256.0f / TWO_PI_F));
+            ui8_g_foc_angle = angle_counts;
+
+            float mod_idx = sqrtf(valpha * valpha + vbeta * vbeta);
+            float duty_norm = (vlim > 0.0f) ? fminf(mod_idx, vlim) / vlim : 0.0f;
+            uint8_t duty_counts = (uint8_t)lroundf(fminf(duty_norm * 254.0f, 254.0f));
+            ui8_controller_duty_cycle_target = duty_counts;
+
+            float iq_abs = fabsf(iq);
+            float phase_current_adc = iq_abs / battery_step_a;
+            if (phase_current_adc > 1023.0f) {
+                phase_current_adc = 1023.0f;
+            }
+            ui16_adc_motor_phase_current = (uint16_t)phase_current_adc;
+        }
+    }
+
+    uint8_t ui8_svm_table_index = ui8_g_foc_angle;
     // Phase A is advanced 240 degrees over phase B
     ui16_temp = ui16_svm_table[(uint8_t) (ui8_svm_table_index + 171)]; // 171 = 240 deg when 360° is coded as 256
     if (ui16_temp > MIDDLE_SVM_TABLE) { // 214 at 19 khz
@@ -719,375 +797,10 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
         
         // update foc_angle once per electric rotation (based on fog_flag
         // foc_angle is added to the position given by hall sensor + interpolation )
-        if (ui8_g_duty_cycle > 0) {
-            // calculate phase current.
-            if (ui8_g_duty_cycle > 10) {
-                ui16_adc_motor_phase_current = (uint16_t)((uint16_t)(((uint16_t)ui8_adc_battery_current_filtered) << 8)) / ui8_g_duty_cycle;
-            } else {
-                ui16_adc_motor_phase_current = (uint16_t)ui8_adc_battery_current_filtered;
-            }
-            if (ui8_foc_flag) { // is set on 1 when rotor is at 150° so once per electric rotation
-                /*
-                 * Extremum‑seeking optimiser for phase advance.  On each hall event marking
-                 * 150° electrical (once per ERPS), we evaluate how changing the advance affects
-                 * speed and current.  The controller maintains two variables:
-                 *   adv_target – the desired FOC advance in units up to a dynamic maximum.
-                 *   adv_actual – the slew‑limited value applied to ui8_g_foc_angle.
-                 * A dynamic maximum advance is derived from the display’s FOC multiplier
-                 * (ui8_foc_angle_multiplicator).  The multiplier is scaled into the
-                 * [0, ADV_MAX] range.  Since ADV_MIN may be negative, this means the
-                 * dynamic maximum is still non‑negative: the optimiser can raise the
-                 * advance from its negative starting point through zero up to the limit.
-                 * Increasing the multiplier allows more positive phase advance and
-                 * decreasing it restricts the optimiser’s headroom.  This mapping
-                 * exposes user control of the hill‑climb via the display.  The
-                 * hill‑climb logic itself remains: if a small increase in advance improves
-                 * ERPS without raising current, we continue in the same direction; if it
-                 * degrades speed or raises current, we reverse direction.  A decimation
-                 * counter (DECIMATE_N) lets the system settle between adjustments.  Finally,
-                 * adv_actual slews toward adv_target at bounded rates to prevent sudden
-                 * jumps, and the result feeds ui8_g_foc_angle.
-                 */
-                {
-                    /*
-                     * Compute a dynamic maximum advance from the display’s FOC multiplier.  We
-                     * clamp the multiplier to the 0…50 range and then scale it to the static
-                     * ADV_MAX.  A non‑zero multiplier yields at least ADV_MIN counts of headroom
-                     * so the optimiser can operate at low settings.  This value is used below
-                     * to cap adv_target instead of the compile‑time ADV_MAX constant.
-                     */
-                    int8_t adv_max_dynamic;
-                    {
-                        uint16_t mult = (uint16_t)ui8_foc_angle_multiplicator;
-                        if (mult > 50U) mult = 50U;
-                        // Scale the user multiplier into the 0…ADV_MAX range.  Cast to
-                        // int8_t to keep sign consistent with adv_target/adv_actual.  The
-                        // result is non‑negative because ADV_MAX is unsigned.
-                        adv_max_dynamic = (int8_t)((mult * (uint16_t)ADV_MAX) / 50U);
-                        // Ensure at least ADV_MIN counts of headroom when multiplier is non‑zero
-                        // (so the optimiser can always move).  If mult is zero, adv_max_dynamic
-                        // will be zero and adv_target will stay at ADV_INIT.
-                        if ((mult > 0U) && (adv_max_dynamic < ADV_MIN)) {
-                            adv_max_dynamic = ADV_MIN;
-                        }
-                    }
-
-                    // Increment decimation counter; perform optimisation every DECIMATE_N ticks
-                    tick_ctr_hc++;
-                    if (tick_ctr_hc >= DECIMATE_N) {
-                        tick_ctr_hc = 0;
-                        // Current ERPS and battery current
-                        uint16_t ER = ui16_motor_speed_erps;
-                        uint8_t  I  = ui8_adc_battery_current_filtered;
-                        int16_t dER = (int16_t)ER - (int16_t)ER_prev_hc;
-                        int16_t dI  = (int16_t)I  - (int16_t)I_prev_hc;
-                        // Apply hysteresis deadbands
-                        if (dER > -(int16_t)ER_HYST && dER < (int16_t)ER_HYST) dER = 0;
-                        if (dI  > -(int16_t)I_HYST  && dI  < (int16_t)I_HYST)  dI  = 0;
-                        int8_t improvement = 0;
-                        // Good: speed up (dER > 0) and no extra current (dI <= 0)
-                        if ((dER > 0) && (dI <= 0)) improvement = 1;
-                        // Bad: speed down and current up
-                        else if ((dER < 0) && (dI >= 0)) improvement = -1;
-                        else improvement = 0;
-                        if (improvement > 0) {
-                            // Continue in same direction
-                            if (dir_hc > 0) {
-                                // dir positive: step forward by STEP_UP, clamp to adv_max_dynamic
-                                int16_t tmp = (int16_t)adv_target + (int16_t)STEP_UP;
-                                if (tmp > (int16_t)adv_max_dynamic) adv_target = adv_max_dynamic;
-                                else adv_target = (int8_t)tmp;
-                            } else {
-                                // dir negative: step backward by STEP_DN, clamp to ADV_MIN
-                                int16_t tmp = (int16_t)adv_target - (int16_t)STEP_DN;
-                                if (tmp < (int16_t)ADV_MIN) adv_target = ADV_MIN;
-                                else adv_target = (int8_t)tmp;
-                            }
-                        } else if (improvement < 0) {
-                            // Flip direction and step back
-                            dir_hc = -dir_hc;
-                            if (dir_hc > 0) {
-                                // now moving forward: add STEP_UP with clamp
-                                int16_t tmp = (int16_t)adv_target + (int16_t)STEP_UP;
-                                if (tmp > (int16_t)adv_max_dynamic) adv_target = adv_max_dynamic;
-                                else adv_target = (int8_t)tmp;
-                            } else {
-                                // now moving backward: subtract STEP_DN with clamp
-                                int16_t tmp = (int16_t)adv_target - (int16_t)STEP_DN;
-                                if (tmp < (int16_t)ADV_MIN) adv_target = ADV_MIN;
-                                else adv_target = (int8_t)tmp;
-                            }
-                        } else {
-                            // Neutral zone: optional bias to reduce advance when duty is max and current rising.
-                            // Only reduce if above ADV_MIN to avoid dropping below the starting negative lead.
-                            if ((ui8_g_duty_cycle >= PWM_DUTY_CYCLE_MAX) && (dI > 0)) {
-                                if (adv_target > ADV_MIN) adv_target--;
-                            }
-                        }
-                        // Save for next iteration
-                        ER_prev_hc = ER;
-                        I_prev_hc  = I;
-                    }
-                    // Slew‑limit adv_actual toward adv_target
-                    int16_t delta = (int16_t)adv_target - (int16_t)adv_actual;
-                    if (delta > (int16_t)SLEW_UP_PER_TICK) delta = (int16_t)SLEW_UP_PER_TICK;
-                    if (delta < -(int16_t)SLEW_DN_PER_TICK) delta = -(int16_t)SLEW_DN_PER_TICK;
-                    adv_actual = (int8_t)((int16_t)adv_actual + delta);
-                    // Convert signed angle to unsigned for lookup table indexing.  Negative
-                    // values wrap into [246…255] so that the underlying SVM logic
-                    // interprets them as phase retarding offsets.
-                    ui8_g_foc_angle = (uint8_t)adv_actual;
-                }
-            }
-        } else { // duty cycle = 0
+        if (ui8_g_duty_cycle == 0) {
             ui16_adc_motor_phase_current = 0;
-            // removed by mstrens
-            //if (ui8_foc_flag) {
-            //    ui8_foc_angle_accumulated = ui8_foc_angle_accumulated - (ui8_foc_angle_accumulated >> 4);
-            //    ui8_g_foc_angle = ui8_foc_angle_accumulated >> 4;
-            //    ui8_foc_flag = 0;
-            //}
-            // added by mstrens
-            ui8_g_foc_angle = 0; 
-            
         }
         ui8_foc_flag = 0;
-
-        // get brake state-
-        ui8_brake_state = XMC_GPIO_GetInput(IN_BRAKE_PORT, IN_BRAKE_PIN) == 0; // Low level means that brake is on
-        
-        // added by mstrens to detect overcurrent and to decrase immediatelu the duty cycle
-        //uint8_t ui8_temp_adc_current = ((XMC_VADC_GROUP_GetResult(vadc_0_group_0_HW , 15 ) & 0xFFFF) +
-	    //								(XMC_VADC_GROUP_GetResult(vadc_0_group_1_HW , 15 ) & 0xFFFF)) >>5  ;  // >>2 for IIR, >>2 for ADC12 to ADC10 , >>1 for averaging		
-	    // changed by mstrens to take care of infineon init for vadc (result 12bits and in reg 1)
-	    uint8_t ui8_temp_adc_current = (XMC_VADC_GROUP_GetResult(vadc_0_group_0_HW , VADC_I4_RESULT_REG ) & 0xFFFF) >> 2;// from 12 to 10bits 
-	    if ( ui8_temp_adc_current > ui8_adc_battery_overcurrent){ // 112+50 in tsdz2 (*0,16A) => 26A
-            ui8_g_duty_cycle -= (ui8_g_duty_cycle >> 2); // reduce immediately dutycycle by 25% to avoid overcurrent in next pwm 
-        }    
-		
-
-    // to debug
-    //uint16_t temp1d  =  XMC_CCU4_SLICE_GetTimerValue(HALL_SPEED_TIMER_HW);
-    //temp1d = temp1d - start_ticks;
-    //if (temp1d > debug_time_ccu8_irq1d) debug_time_ccu8_irq1d = temp1d; // store the max enlapsed time in the irq
-    
-                /****************************************************************************/
-        // PWM duty_cycle controller:
-        // - limit battery undervolt
-        // - limit battery max current
-        // - limit motor max phase current
-        // - limit motor max ERPS
-        // - ramp up/down PWM duty_cycle and/or field weakening angle value
-
-        // check if to decrease, increase or maintain duty cycle
-        //note:
-        // ui8_adc_battery_current_filtered is calculated just here above
-        // ui16_adc_motor_phase_current_max = 135 per default for TSDZ2 (13A *100/16) *187/112 = battery_current convert to ADC10bits *and ratio between adc max for phase and for battery
-        //        is initiaded in void ebike_app_init(void) in ebyke_app.c
-        
-        
-        // every 25ms ebike_app_controller fills
-        //  - ui8_controller_adc_battery_current_target
-        //  - ui8_controller_duty_cycle_target // is usually filled with 255 (= 100%)
-        //  - ui8_controller_duty_cycle_ramp_up_inverse_step
-        //  - ui8_controller_duty_cycle_ramp_down_inverse_step
-        // Furthermore,  when ebyke_app_controller start pwm, g_duty_cycle is first set on 30 (= 12%)
-        if ((ui8_controller_duty_cycle_target < ui8_g_duty_cycle)                     // requested duty cycle is lower than actual
-          || (ui8_controller_adc_battery_current_target < ui8_adc_battery_current_filtered)  // requested current is lower than actual
-		  || (ui16_adc_motor_phase_current >  ui16_adc_motor_phase_current_max)               // motor phase is to high
-//          || (ui16_hall_counter_total < (HALL_COUNTER_FREQ / MOTOR_OVER_SPEED_ERPS))        // Erps is to high
-          || (ui16_adc_voltage < ui16_adc_voltage_cut_off)                                  // voltage is to low
-          || (ui8_brake_state)
-        ) {                                                           // brake is ON
-	  // reset duty cycle ramp up counter (filter)
-            ui8_counter_duty_cycle_ramp_up = 0;
-            // ramp down duty cycle ;  after N iterations at 19 khz 
-            if (++ui8_counter_duty_cycle_ramp_down > ui8_controller_duty_cycle_ramp_down_inverse_step) {
-                ui8_counter_duty_cycle_ramp_down = 0;
-                //  first decrement field weakening angle if set or duty cycle if not
-                if (ui8_fw_hall_counter_offset > 0) {
-                    ui8_fw_hall_counter_offset--;
-                }
-				else if (ui8_g_duty_cycle > 0) {
-                    ui8_g_duty_cycle--;
-				}
-            }
-        }
-		else if ((ui8_controller_duty_cycle_target > ui8_g_duty_cycle)                     // requested duty cycle is higher than actual
-          && (ui8_controller_adc_battery_current_target > ui8_adc_battery_current_filtered)) { //Requested current is higher than actual
-			// reset duty cycle ramp down counter (filter)
-            ui8_counter_duty_cycle_ramp_down = 0;
-            // ramp up duty cycle
-            if (++ui8_counter_duty_cycle_ramp_up > ui8_controller_duty_cycle_ramp_up_inverse_step) {
-                ui8_counter_duty_cycle_ramp_up = 0;
-                // increment duty cycle
-                if (ui8_g_duty_cycle < PWM_DUTY_CYCLE_STARTUP) {
-                    ui8_g_duty_cycle = PWM_DUTY_CYCLE_STARTUP;
-                }	
-                else if (ui8_g_duty_cycle < PWM_DUTY_CYCLE_MAX) {
-                    if (ui8_g_duty_cycle < PWM_DUTY_CYCLE_MAX) {
-                        ui8_g_duty_cycle++;
-                    }
-                }    
-            }
-        }
-		else if ((ui8_field_weakening_enabled)
-				&& (ui8_g_duty_cycle == PWM_DUTY_CYCLE_MAX)) {
-            // reset duty cycle ramp down counter (filter)
-            ui8_counter_duty_cycle_ramp_down = 0;
-            if (++ui8_counter_duty_cycle_ramp_up > ui8_controller_duty_cycle_ramp_up_inverse_step) {
-               ui8_counter_duty_cycle_ramp_up = 0;               
-               // increment field weakening angle
-               if (ui8_fw_hall_counter_offset < ui8_fw_hall_counter_offset_max) {
-                   ui8_fw_hall_counter_offset++;
-			   }
-            }
-        }
-		else {
-            // duty cycle is where it needs to be so reset ramp counters (filter)
-            ui8_counter_duty_cycle_ramp_up = 0;
-            ui8_counter_duty_cycle_ramp_down = 0;
-        }
-    // to debug
-    //uint16_t temp1e  =  XMC_CCU4_SLICE_GetTimerValue(HALL_SPEED_TIMER_HW);
-    //temp1e = temp1e - start_ticks;
-    //if (temp1e > debug_time_ccu8_irq1e) debug_time_ccu8_irq1e = temp1e; // store the max enlapsed time in the irq
-
-        /****************************************************************************/
-        // Wheel speed sensor detection
-        // 
-        
-        static uint16_t ui16_wheel_speed_sensor_ticks_counter;
-        static uint8_t ui8_wheel_speed_sensor_ticks_counter_started;
-        static uint8_t ui8_wheel_speed_sensor_pin_state_old;
-
-        // check wheel speed sensor pin state
-        //ui8_temp = WHEEL_SPEED_SENSOR__PORT->IDR & WHEEL_SPEED_SENSOR__PIN; // in tsdz2
-        uint8_t ui8_in_speed_pin_state = (uint8_t) XMC_GPIO_GetInput(IN_SPEED_PORT, IN_SPEED_PIN);
-        // check wheel speed sensor ticks counter min value
-		if (ui16_wheel_speed_sensor_ticks) { 
-            ui16_wheel_speed_sensor_ticks_counter_min = ui16_wheel_speed_sensor_ticks >> 3; 
-        } else {
-            ui16_wheel_speed_sensor_ticks_counter_min = WHEEL_SPEED_SENSOR_TICKS_COUNTER_MIN >> 3; // =39932/8= 4991
-        } 
-		if (!ui8_wheel_speed_sensor_ticks_counter_started ||
-		  (ui16_wheel_speed_sensor_ticks_counter > ui16_wheel_speed_sensor_ticks_counter_min)) { 
-			// check if wheel speed sensor pin state has changed
-			if (ui8_in_speed_pin_state != ui8_wheel_speed_sensor_pin_state_old) {
-				// update old wheel speed sensor pin state
-				ui8_wheel_speed_sensor_pin_state_old = ui8_in_speed_pin_state;
-				// only consider the 0 -> 1 transition
-				if (ui8_in_speed_pin_state) {
-					// check if first transition
-					if (!ui8_wheel_speed_sensor_ticks_counter_started) {
-						// start wheel speed sensor ticks counter as this is the first transition
-						ui8_wheel_speed_sensor_ticks_counter_started = 1;
-					} else {
-						// check if wheel speed sensor ticks counter is out of bounds
-						if (ui16_wheel_speed_sensor_ticks_counter < WHEEL_SPEED_SENSOR_TICKS_COUNTER_MAX) { // 164
-							ui16_wheel_speed_sensor_ticks = 0;
-							ui16_wheel_speed_sensor_ticks_counter = 0;
-							ui8_wheel_speed_sensor_ticks_counter_started = 0;
-						} else {
-                            // a valid time occured : save the counter with the enlapse time * 55usec
-							ui16_wheel_speed_sensor_ticks = ui16_wheel_speed_sensor_ticks_counter; 
-							ui16_wheel_speed_sensor_ticks_counter = 0;
-                            ++ui32_wheel_speed_sensor_ticks_total; // used only in 860C version
-						}
-					}
-				}
-			}
-		}
-
-        // increment and also limit the ticks counter
-        if (ui8_wheel_speed_sensor_ticks_counter_started) {
-            if (ui16_wheel_speed_sensor_ticks_counter < WHEEL_SPEED_SENSOR_TICKS_COUNTER_MIN) { // 39932 ; so when speed is more than a min
-                ++ui16_wheel_speed_sensor_ticks_counter; // increase counter
-            } else {
-                // reset variables
-                ui16_wheel_speed_sensor_ticks = 0;
-                ui16_wheel_speed_sensor_ticks_counter = 0;
-                ui8_wheel_speed_sensor_ticks_counter_started = 0;
-            }
-        }
-        //end wheel speed
-
-        // added by mstrens
-        // get raw adc torque sensor (in 10 bits) 
-        ui16_adc_torque   = (XMC_VADC_GROUP_GetResult(vadc_0_group_0_HW , VADC_TORQUE_RESULT_REG ) & 0xFFF) >> 2; // torque gr0 ch7 result 7 in bg p2.2
-        //filter it (3 X previous + 1 X new)
-        uint16_t ui16_adc_torque_new_filtered = ( ui16_adc_torque + (ui16_adc_torque_filtered<<1) + ui16_adc_torque_filtered) >> 2;
-        if (ui16_adc_torque_new_filtered == ui16_adc_torque_filtered){ // code to ensure it reaches the limits
-            if ( ui16_adc_torque_new_filtered < ui16_adc_torque) 
-                ui16_adc_torque_new_filtered++; 
-            else if (ui16_adc_torque_new_filtered > ui16_adc_torque) 
-                ui16_adc_torque_new_filtered--;
-        }
-        ui16_adc_torque_filtered = ui16_adc_torque_new_filtered;
-        
-        /****************************************************************************/
-        /*
-         * - New pedal start/stop detection Algorithm (by MSpider65) -
-         *
-         * Pedal start/stop detection uses both transitions of both PAS sensors
-         * ui8_temp stores the PAS1 and PAS2 state: bit0=PAS1,  bit1=PAS2
-         * Pedal forward ui8_temp sequence is: 0x01 -> 0x00 -> 0x02 -> 0x03 -> 0x01
-         * After a stop, the first forward transition is taken as reference transition
-         * Following forward transition sets the cadence to 7RPM for immediate startup
-         * Then, starting from the second reference transition, the cadence is calculated based on counter value
-         * All transitions are a reference for the stop detection counter (4 time faster stop detection):
-         */
-        
-        uint8_t ui8_temp_cadence = 0;
-        //if (PAS1__PORT->IDR & PAS1__PIN) {    // this was the code in TSDZ2
-        //    ui8_temp |= (unsigned char)0x01;
-		//}
-        //if (PAS2__PORT->IDR & PAS2__PIN) {
-        //    ui8_temp |= (unsigned char)0x02;
-		//}
-        ui8_temp_cadence = (uint8_t) (XMC_GPIO_GetInput(IN_PAS1_PORT, IN_PAS1_PIN ) | ( XMC_GPIO_GetInput(IN_PAS2_PORT, IN_PAS2_PIN ) <<1 ));
-        if (ui8_temp_cadence != ui8_pas_state_old) {
-            if (ui8_pas_state_old != ui8_pas_old_valid_state[ui8_temp_cadence]) {
-                // wrong state sequence: backward rotation
-                ui16_cadence_sensor_ticks = 0;
-                ui8_cadence_calc_ref_state = NO_PAS_REF; // 5
-                ui8_pas_new_transition = 0x80; // used in mspider logic for torque sensor
-                goto skip_cadence;
-            }
-			ui16_cadence_sensor_ticks_counter_min = ui16_cadence_ticks_count_min_speed_adj; // 4270 at 4km/h ... 341 at 40 km/h
-            if (ui8_temp_cadence == ui8_cadence_calc_ref_state) { // pattern is valid and represent 1 tour
-                ui8_pas_new_transition = 1; // mspider logic for torque sensor;mark for one of the 20 transitions per rotation
-            
-                // ui16_cadence_calc_counter is valid for cadence calculation
-                ui16_cadence_sensor_ticks = ui16_cadence_calc_counter; // use the counter as cadence for ebike_app.c
-                ui16_cadence_calc_counter = 0;
-                // software based Schmitt trigger to stop motor jitter when at resolution limits
-                ui16_cadence_sensor_ticks_counter_min += CADENCE_SENSOR_STANDARD_MODE_SCHMITT_TRIGGER_THRESHOLD; // 427 at 19 khz
-                ui8_pas_counter++; // mstrens : increment the counter when the transition is valid
-            } else if (ui8_cadence_calc_ref_state == NO_PAS_REF) {  // 5
-                // this is the new reference state for cadence calculation
-                ui8_cadence_calc_ref_state = ui8_temp_cadence;
-                ui16_cadence_calc_counter = 0;
-                ui8_pas_counter = 0; // mstrens :  reset the counter for full rotation
-            } else if (ui16_cadence_sensor_ticks == 0) {
-                // Waiting the second reference transition: set the cadence to 7 RPM for immediate start
-                ui16_cadence_sensor_ticks = CADENCE_TICKS_STARTUP; // 7619
-            }
-            skip_cadence:
-            ui16_cadence_stop_counter = 0; // reset the counter used to detect pedal stop
-            ui8_pas_state_old = ui8_temp_cadence; // save current PAS state to detect a change
-        } // end of change in PAS pattern
-        if (++ui16_cadence_stop_counter > ui16_cadence_sensor_ticks_counter_min) {// pedals stop detected
-            ui16_cadence_sensor_ticks = 0;
-            ui16_cadence_stop_counter = 0;
-            ui8_cadence_calc_ref_state = NO_PAS_REF;
-            ui8_pas_new_transition = 0x80; // for mspider logic for torque sensor
-            ui8_pas_counter = 0; // mstrens :  reset the counter for full rotation
-        } else if (ui8_cadence_calc_ref_state != NO_PAS_REF) { // 5
-            // increment cadence tick counter
-            ++ui16_cadence_calc_counter;
-        }
-        // end cadence
 
         // original perform also a save of some parameters (battery consumption) // to do 
     #if (DEBUG_IRQ1_TIME == (1))
