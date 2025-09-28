@@ -1,0 +1,38 @@
+--- main.h
++++ main.h (patched)
+@@ -274,9 +274,9 @@
+ 
+ // adc current (38 = 6A, 50 = 8A, 112 = 18A, 124 = 20A , 136 = 22A, 143 = 23A, 187 = 30A)
+ #define ADC_10_BIT_BATTERY_EXTRACURRENT				50  //  8 amps
+-#define ADC_10_BIT_BATTERY_CURRENT_MAX				143	// 23 amps // 1 = 0.16 Amp
+-
+-#define ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX			187	// 30 amps // 1 = 0.16 Amp
++#define ADC_10_BIT_BATTERY_CURRENT_MAX				188	// 30 amps // 1 = 0.16 Amp
++
++#define ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX			313	// 50 amps // 1 = 0.16 Amp
+ /*---------------------------------------------------------
+  NOTE: regarding ADC battery current max
+ 
+@@ -315,7 +315,7 @@
+ 
+ 
+ // default values
+-#define DEFAULT_VALUE_BATTERY_CURRENT_MAX  10  // 10 amps Used only in 860C version
++#define DEFAULT_VALUE_BATTERY_CURRENT_MAX  30  // 30 amps Used only in 860C version
+ 
+ /*---------------------------------------------------------
+ 
+
+--- motor.c
++++ motor.c (patched)
+@@ -655,8 +655,8 @@
+                 //ui8_foc_flag = ((ui16_adc_foc_angle_current * ui8_foc_angle_multiplicator) + 128) >> 8 ; // multiplier = 39 for 48V tsdz2, 
+                 ui8_foc_flag = (((uint16_t) ui8_adc_battery_current_filtered * (uint16_t) ui8_foc_angle_multiplicator) + 128) >> 8 ; // multiplier = 39 for 48V tsdz2, 
+                 // max = 23 *100 / 16 * 40 = 22
+-                if (ui8_foc_flag > 25)
+-                    ui8_foc_flag = 25;
++                if (ui8_foc_flag > 29)
++                    ui8_foc_flag = 29;
+                 // removed by mstrens because current is already based on an average on 1 rotation
+                 //ui8_foc_angle_accumulated = ui8_foc_angle_accumulated - (ui8_foc_angle_accumulated >> 4) + ui8_foc_flag;
+                 //ui8_g_foc_angle = ui8_foc_angle_accumulated >> 4;

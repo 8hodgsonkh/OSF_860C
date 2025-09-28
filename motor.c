@@ -89,86 +89,9 @@ static uint8_t ui8_counter_duty_cycle_ramp_down = 0;
 
 // FOC angle
 static uint8_t ui8_foc_angle_accumulated = 0;
-/*
- * ui8_foc_flag is set once per electrical rotation (when hall pattern 0x03 is detected).
- * We no longer repurpose this flag to carry the phase‑advance value.  Instead it acts solely
- * as a “kick” to execute the hill‑climb controller below.  See the FOC update code in
- * the IRQ handler for details.
- */
 static uint8_t ui8_foc_flag = 0;
 volatile uint8_t ui8_g_foc_angle = 0;
 uint8_t ui8_foc_angle_multiplicator = 0;
-
-/*
- * Extremum‑seeking (hill‑climb) controller constants.
- *
- * The motor controller measures electrical rotations per second (ERPS) and battery current each
- * electrical rotation.  The goal of the optimiser is to find the FOC phase‑advance (lead angle)
- * that maximises ERPS while minimising current.  It does this by nudging the advance up or
- * down depending on whether the most recent change increased speed and/or decreased current.
- *
- * ADV_MIN / ADV_MAX: allowable range for advance (in signed 0…255 units ≈ −90…+90° electrical).
- * A cap around 18 (~25° electrical ≈ 12.5° mechanical for two pole pairs) is conservative for
- * the TSDZ8.  ADV_MIN now equals ADV_INIT, typically −10, so the optimiser may start with
- * a small negative lead at stall.  Adjust ADV_INIT and ADV_MIN to change this offset.
- * STEP_UP / STEP_DN: how far to move the target on each successful/unsuccessful step.
- * I_HYST / ER_HYST: deadbands to ignore small changes in current or ERPS to reduce noise.
- * SLEW_UP_PER_TICK / SLEW_DN_PER_TICK: maximum change applied to the actual angle per
- * electrical rotation; rising more slowly than falling helps the controller stabilise.
- * DECIMATE_N: evaluate the optimisation logic only every N electrical rotations to allow the
- * system to settle between adjustments.
- */
-// Base advance range definitions.
-//
-// We normally start the optimiser at a small negative lead to increase low‑end torque.  One
-// "count" in ui8_g_foc_angle corresponds to ~1.4° electrical, so a value of –10 counts
-// equates to approximately –14° electrical (≈ –10° mechanical for a two‑pole‑pair motor).
-// ADV_INIT defines this initial negative offset in counts.  The optimiser may increase
-// advance above this value up to ADV_MAX.  ADV_MIN is set equal to ADV_INIT so that
-// adv_target and adv_actual never drop below this starting point.  To revert to the
-// original behaviour (no negative lead), set ADV_INIT to 0.
-//
-// NOTE: Changing ADV_INIT below –10 is generally not recommended as too much retard can
-// destabilise the motor at start‑up.
-#define ADV_INIT                (-10)
-#define ADV_MIN                 ADV_INIT
-#define ADV_MAX                 18U
-// The original OSF build used:
-// #define ADV_MIN                 0U
-// #define ADV_MAX                 18U
-// but these are commented out here because we now allow a negative starting angle.  To
-// restore the original behaviour (zero or positive advance only), replace the above
-// definitions with the commented ones.
-#define STEP_UP                 1U
-#define STEP_DN                 1U
-#define I_HYST                  1U
-#define ER_HYST                 1U
-#define SLEW_UP_PER_TICK        1U
-#define SLEW_DN_PER_TICK        2U
-#define DECIMATE_N              4U
-
-// State for the extremum‑seeking phase‑advance optimiser
-// adv_target and adv_actual are signed to permit negative advance values.  They start at
-// ADV_INIT (typically –10) so the motor begins with a small retarded lead.  Using signed
-// types also makes it straightforward to clamp the advance between ADV_MIN and adv_max_dynamic.
-// The original unsigned definitions looked like this:
-// static uint8_t adv_target = 0U;
-// static uint8_t adv_actual = 0U;
-// static int8_t  dir_hc = 1;
-// We keep them here as comments so it’s easy to revert if you wish to disable negative advance.
-static int8_t  adv_target = ADV_INIT;     // desired FOC advance (ADV_MIN…adv_max_dynamic)
-static int8_t  adv_actual = ADV_INIT;     // slew‑limited applied FOC advance
-static int8_t  dir_hc = 1;          // search direction: +1 = increasing advance, −1 = decreasing
-static uint8_t tick_ctr_hc = 0U;    // counter to decimate optimisation evaluations
-static uint16_t ER_prev_hc = 0U;    // previous ERPS snapshot
-static uint8_t I_prev_hc = 0U;      // previous current snapshot (ADC units)
-
-/*
- * The measured electrical rotations per second (ERPS) comes from ebike_app.c.  It is
- * recomputed once every 25 ms and exposed as ui16_motor_speed_erps.  Declaring it extern here
- * lets motor.c use it without introducing a circular dependency.
- */
-extern uint16_t ui16_motor_speed_erps;
 //static uint8_t ui8_foc_angle_multiplier = FOC_ANGLE_MULTIPLIER; //39 for 48V motor
 //static uint8_t ui8_adc_foc_angle_current = 0; // use a ui16 inside the irq
 
@@ -727,117 +650,19 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
                 ui16_adc_motor_phase_current = (uint16_t)ui8_adc_battery_current_filtered;
             }
             if (ui8_foc_flag) { // is set on 1 when rotor is at 150° so once per electric rotation
-                /*
-                 * Extremum‑seeking optimiser for phase advance.  On each hall event marking
-                 * 150° electrical (once per ERPS), we evaluate how changing the advance affects
-                 * speed and current.  The controller maintains two variables:
-                 *   adv_target – the desired FOC advance in units up to a dynamic maximum.
-                 *   adv_actual – the slew‑limited value applied to ui8_g_foc_angle.
-                 * A dynamic maximum advance is derived from the display’s FOC multiplier
-                 * (ui8_foc_angle_multiplicator).  The multiplier is scaled into the
-                 * [0, ADV_MAX] range.  Since ADV_MIN may be negative, this means the
-                 * dynamic maximum is still non‑negative: the optimiser can raise the
-                 * advance from its negative starting point through zero up to the limit.
-                 * Increasing the multiplier allows more positive phase advance and
-                 * decreasing it restricts the optimiser’s headroom.  This mapping
-                 * exposes user control of the hill‑climb via the display.  The
-                 * hill‑climb logic itself remains: if a small increase in advance improves
-                 * ERPS without raising current, we continue in the same direction; if it
-                 * degrades speed or raises current, we reverse direction.  A decimation
-                 * counter (DECIMATE_N) lets the system settle between adjustments.  Finally,
-                 * adv_actual slews toward adv_target at bounded rates to prevent sudden
-                 * jumps, and the result feeds ui8_g_foc_angle.
-                 */
-                {
-                    /*
-                     * Compute a dynamic maximum advance from the display’s FOC multiplier.  We
-                     * clamp the multiplier to the 0…50 range and then scale it to the static
-                     * ADV_MAX.  A non‑zero multiplier yields at least ADV_MIN counts of headroom
-                     * so the optimiser can operate at low settings.  This value is used below
-                     * to cap adv_target instead of the compile‑time ADV_MAX constant.
-                     */
-                    int8_t adv_max_dynamic;
-                    {
-                        uint16_t mult = (uint16_t)ui8_foc_angle_multiplicator;
-                        if (mult > 50U) mult = 50U;
-                        // Scale the user multiplier into the 0…ADV_MAX range.  Cast to
-                        // int8_t to keep sign consistent with adv_target/adv_actual.  The
-                        // result is non‑negative because ADV_MAX is unsigned.
-                        adv_max_dynamic = (int8_t)((mult * (uint16_t)ADV_MAX) / 50U);
-                        // Ensure at least ADV_MIN counts of headroom when multiplier is non‑zero
-                        // (so the optimiser can always move).  If mult is zero, adv_max_dynamic
-                        // will be zero and adv_target will stay at ADV_INIT.
-                        if ((mult > 0U) && (adv_max_dynamic < ADV_MIN)) {
-                            adv_max_dynamic = ADV_MIN;
-                        }
-                    }
-
-                    // Increment decimation counter; perform optimisation every DECIMATE_N ticks
-                    tick_ctr_hc++;
-                    if (tick_ctr_hc >= DECIMATE_N) {
-                        tick_ctr_hc = 0;
-                        // Current ERPS and battery current
-                        uint16_t ER = ui16_motor_speed_erps;
-                        uint8_t  I  = ui8_adc_battery_current_filtered;
-                        int16_t dER = (int16_t)ER - (int16_t)ER_prev_hc;
-                        int16_t dI  = (int16_t)I  - (int16_t)I_prev_hc;
-                        // Apply hysteresis deadbands
-                        if (dER > -(int16_t)ER_HYST && dER < (int16_t)ER_HYST) dER = 0;
-                        if (dI  > -(int16_t)I_HYST  && dI  < (int16_t)I_HYST)  dI  = 0;
-                        int8_t improvement = 0;
-                        // Good: speed up (dER > 0) and no extra current (dI <= 0)
-                        if ((dER > 0) && (dI <= 0)) improvement = 1;
-                        // Bad: speed down and current up
-                        else if ((dER < 0) && (dI >= 0)) improvement = -1;
-                        else improvement = 0;
-                        if (improvement > 0) {
-                            // Continue in same direction
-                            if (dir_hc > 0) {
-                                // dir positive: step forward by STEP_UP, clamp to adv_max_dynamic
-                                int16_t tmp = (int16_t)adv_target + (int16_t)STEP_UP;
-                                if (tmp > (int16_t)adv_max_dynamic) adv_target = adv_max_dynamic;
-                                else adv_target = (int8_t)tmp;
-                            } else {
-                                // dir negative: step backward by STEP_DN, clamp to ADV_MIN
-                                int16_t tmp = (int16_t)adv_target - (int16_t)STEP_DN;
-                                if (tmp < (int16_t)ADV_MIN) adv_target = ADV_MIN;
-                                else adv_target = (int8_t)tmp;
-                            }
-                        } else if (improvement < 0) {
-                            // Flip direction and step back
-                            dir_hc = -dir_hc;
-                            if (dir_hc > 0) {
-                                // now moving forward: add STEP_UP with clamp
-                                int16_t tmp = (int16_t)adv_target + (int16_t)STEP_UP;
-                                if (tmp > (int16_t)adv_max_dynamic) adv_target = adv_max_dynamic;
-                                else adv_target = (int8_t)tmp;
-                            } else {
-                                // now moving backward: subtract STEP_DN with clamp
-                                int16_t tmp = (int16_t)adv_target - (int16_t)STEP_DN;
-                                if (tmp < (int16_t)ADV_MIN) adv_target = ADV_MIN;
-                                else adv_target = (int8_t)tmp;
-                            }
-                        } else {
-                            // Neutral zone: optional bias to reduce advance when duty is max and current rising.
-                            // Only reduce if above ADV_MIN to avoid dropping below the starting negative lead.
-                            if ((ui8_g_duty_cycle >= PWM_DUTY_CYCLE_MAX) && (dI > 0)) {
-                                if (adv_target > ADV_MIN) adv_target--;
-                            }
-                        }
-                        // Save for next iteration
-                        ER_prev_hc = ER;
-                        I_prev_hc  = I;
-                    }
-                    // Slew‑limit adv_actual toward adv_target
-                    int16_t delta = (int16_t)adv_target - (int16_t)adv_actual;
-                    if (delta > (int16_t)SLEW_UP_PER_TICK) delta = (int16_t)SLEW_UP_PER_TICK;
-                    if (delta < -(int16_t)SLEW_DN_PER_TICK) delta = -(int16_t)SLEW_DN_PER_TICK;
-                    adv_actual = (int8_t)((int16_t)adv_actual + delta);
-                    // Convert signed angle to unsigned for lookup table indexing.  Negative
-                    // values wrap into [246…255] so that the underlying SVM logic
-                    // interprets them as phase retarding offsets.
-                    ui8_g_foc_angle = (uint8_t)adv_actual;
-                }
+                //uint16_t ui16_adc_foc_angle_current = ((uint16_t)(ui8_adc_battery_current_filtered ) + (ui16_adc_motor_phase_current )) >> 1;
+                // mstrens : added 128 for better rounding
+                //ui8_foc_flag = ((ui16_adc_foc_angle_current * ui8_foc_angle_multiplicator) + 128) >> 8 ; // multiplier = 39 for 48V tsdz2,
+                ui8_foc_flag = (((uint16_t) ui8_adc_battery_current_filtered * (uint16_t) ui8_foc_angle_multiplicator) + 128) >> 8 ; // multiplier = 39 for 48V tsdz2,
+                // max = 23 *100 / 16 * 40 = 22
+                if (ui8_foc_flag > 29)
+                    ui8_foc_flag = 29;
+                // removed by mstrens because current is already based on an average on 1 rotation
+                //ui8_foc_angle_accumulated = ui8_foc_angle_accumulated - (ui8_foc_angle_accumulated >> 4) + ui8_foc_flag;
+                //ui8_g_foc_angle = ui8_foc_angle_accumulated >> 4;
+                //ui8_foc_flag = 0;
+                // added by mstrens
+                ui8_g_foc_angle = ui8_foc_flag ;
             }
         } else { // duty cycle = 0
             ui16_adc_motor_phase_current = 0;
