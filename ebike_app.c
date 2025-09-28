@@ -630,7 +630,7 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 		/ ui16_battery_voltage_filtered_x1000));
 	
 	// set max battery current
-	ui8_adc_battery_current_max = ui8_min(ui8_adc_battery_current_max_temp_1, ui8_adc_battery_current_max_temp_2);
+	ui8_adc_battery_current_max = ui8_adc_battery_current_max_temp_1;
 			
 	mstest6=ui8_adc_battery_current_target;
 	*/
@@ -1315,7 +1315,26 @@ static void apply_throttle(void)
             (uint8_t) 0,
             (uint8_t) 255);
 			
-		// set throttle assist, virtual or adc
+		
+		// --- One-knob mid-point shaping (0..50 -> mid at 30..70%) ---
+		{
+			uint8_t k = ui8_adc_pedal_torque_angle_adj; // 0..50 from rx[52]
+			uint16_t mid_pct = 30U + ((uint16_t)k * 40U) / 50U;        // 30..70
+			uint16_t mid255  = (mid_pct * 255U + 50U) / 100U;          // 77..178, rounded
+
+			uint16_t x = ui8_throttle_adc_in; // 0..255
+			uint16_t y;
+			if (x <= 127U) {
+				y = (x * mid255 + 63U) / 127U;
+			} else {
+				uint16_t top = 255U - mid255;
+				y = mid255 + (((x - 128U) * top + 63U) / 127U);
+			}
+			if (y > 255U) y = 255U;
+			ui8_throttle_adc_in = (uint8_t)y;
+		}
+		// -------------------------------------------------------------
+// set throttle assist, virtual or adc
 		if (ui8_throttle_virtual) {
 			ui8_adc_throttle_assist = ui8_throttle_virtual;
 		}
@@ -2492,10 +2511,10 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 			uint8_t ui8_adc_battery_current_max_temp_2 = ui32_battery_current_max_x100 / BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100;
 
 			// set max battery current
-			ui8_adc_battery_current_max = ui8_min(ui8_adc_battery_current_max_temp_1, ui8_adc_battery_current_max_temp_2);
+			ui8_adc_battery_current_max = ui8_adc_battery_current_max_temp_1;
 			// set max motor phase current
 			ui16_temp = (uint16_t)(ui8_adc_battery_current_max * ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX);
-			ui16_adc_motor_phase_current_max = (uint8_t)(ui16_temp / ADC_10_BIT_BATTERY_CURRENT_MAX);
+			ui16_adc_motor_phase_current_max = (uint16_t)(ui16_temp / ADC_10_BIT_BATTERY_CURRENT_MAX);
 			// limit max motor phase current if higher than configured hardware limit (safety)
 			if (ui16_adc_motor_phase_current_max > ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX) {
 			ui16_adc_motor_phase_current_max = ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX;
