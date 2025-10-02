@@ -73,7 +73,7 @@ static uint16_t ui16_hall_counter_total_previous = 0;  // used to check if erps 
 volatile uint8_t ui8_controller_duty_cycle_ramp_up_inverse_step = PWM_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_DEFAULT; // 194
 volatile uint8_t ui8_controller_duty_cycle_ramp_down_inverse_step = PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_DEFAULT; // 73
 volatile uint16_t ui16_adc_voltage_cut_off = 300*100/BATTERY_VOLTAGE_PER_10_BIT_ADC_STEP_X1000; // 30Volt default value =  300*100/87 in TSDZ2
-volatile uint8_t ui8_adc_battery_current_filtered = 0; // current in adc10 bits units (average on 1 rotation)
+volatile uint16_t ui16_adc_battery_current_filtered = 0; // current in adc10 bits units (average on 1 rotation)
 volatile uint32_t ui32_adc_battery_current_1_rotation_15b = 0; // value in 12 +2 +1 = 15 bits (ADC + IIR + average)
 volatile uint16_t ui16_controller_adc_battery_current_target = 0;
 volatile uint8_t ui8_g_duty_cycle = 0;
@@ -510,8 +510,8 @@ __RAM_FUNC void CCU80_0_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
     }
 
     // mstrens : moved from irq1 to irq0 to use average current over 1 rotation for regulation
-    //ui8_adc_battery_current_filtered  = ui32_adc_battery_current_1_rotation_15b >> 5 ; // from 15 bits to 10 bits like TSDZ2 
-    ui8_adc_battery_current_filtered = ui32_adc_battery_current_15b_moving_average  >> 5;
+    //ui16_adc_battery_current_filtered  = ui32_adc_battery_current_1_rotation_15b >> 5 ; // from 15 bits to 10 bits like TSDZ2
+    ui16_adc_battery_current_filtered = ui32_adc_battery_current_15b_moving_average  >> 5;
 
     /****************************************************************************/
     // - calculate interpolation angle and sine wave table index when speed is known
@@ -645,15 +645,15 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
         if (ui8_g_duty_cycle > 0) {
             // calculate phase current.
             if (ui8_g_duty_cycle > 10) {
-                ui16_adc_motor_phase_current = (uint16_t)((uint16_t)(((uint16_t)ui8_adc_battery_current_filtered) << 8)) / ui8_g_duty_cycle;
+                ui16_adc_motor_phase_current = (uint16_t)(((uint32_t)ui16_adc_battery_current_filtered << 8) / ui8_g_duty_cycle);
             } else {
-                ui16_adc_motor_phase_current = (uint16_t)ui8_adc_battery_current_filtered;
+                ui16_adc_motor_phase_current = ui16_adc_battery_current_filtered;
             }
             if (ui8_foc_flag) { // is set on 1 when rotor is at 150° so once per electric rotation
-                //uint16_t ui16_adc_foc_angle_current = ((uint16_t)(ui8_adc_battery_current_filtered ) + (ui16_adc_motor_phase_current )) >> 1;
+                //uint16_t ui16_adc_foc_angle_current = ((uint16_t)(ui16_adc_battery_current_filtered ) + (ui16_adc_motor_phase_current )) >> 1;
                 // mstrens : added 128 for better rounding
                 //ui8_foc_flag = ((ui16_adc_foc_angle_current * ui8_foc_angle_multiplicator) + 128) >> 8 ; // multiplier = 39 for 48V tsdz2,
-                ui8_foc_flag = (((uint16_t) ui8_adc_battery_current_filtered * (uint16_t) ui8_foc_angle_multiplicator) + 128) >> 8 ; // multiplier = 39 for 48V tsdz2,
+                ui8_foc_flag = (((uint16_t) ui16_adc_battery_current_filtered * (uint16_t) ui8_foc_angle_multiplicator) + 128) >> 8 ; // multiplier = 39 for 48V tsdz2,
                 // max = 23 *100 / 16 * 40 = 22
                 if (ui8_foc_flag > 29)
                     ui8_foc_flag = 29;
@@ -706,7 +706,7 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
 
         // check if to decrease, increase or maintain duty cycle
         //note:
-        // ui8_adc_battery_current_filtered is calculated just here above
+        // ui16_adc_battery_current_filtered is calculated just here above
         // ui16_adc_motor_phase_current_max = 135 per default for TSDZ2 (13A *100/16) *187/112 = battery_current convert to ADC10bits *and ratio between adc max for phase and for battery
         //        is initiaded in void ebike_app_init(void) in ebyke_app.c
         
@@ -718,13 +718,13 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
         //  - ui8_controller_duty_cycle_ramp_down_inverse_step
         // Furthermore,  when ebyke_app_controller start pwm, g_duty_cycle is first set on 30 (= 12%)
         if ((ui8_controller_duty_cycle_target < ui8_g_duty_cycle)                     // requested duty cycle is lower than actual
-            || ((ui16_controller_adc_battery_current_target < (uint16_t)ui8_adc_battery_current_filtered))
+            || (ui16_controller_adc_battery_current_target < (ui16_adc_battery_current_filtered)
             // requested current is lower than actual
 		  || (ui16_adc_motor_phase_current >  ui16_adc_motor_phase_current_max)               // motor phase is to high
 //          || (ui16_hall_counter_total < (HALL_COUNTER_FREQ / MOTOR_OVER_SPEED_ERPS))        // Erps is to high
           || (ui16_adc_voltage < ui16_adc_voltage_cut_off)                                  // voltage is to low
           || (ui8_brake_state)
-        ) {                                                           // brake is ON
+        )) {                                                           // brake is ON
 	  // reset duty cycle ramp up counter (filter)
             ui8_counter_duty_cycle_ramp_up = 0;
             // ramp down duty cycle ;  after N iterations at 19 khz 
@@ -740,7 +740,7 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
             }
         }
 		else if ((ui8_controller_duty_cycle_target > ui8_g_duty_cycle)                     // requested duty cycle is higher than actual
-          && (ui16_controller_adc_battery_current_target > (uint16_t)ui8_adc_battery_current_filtered)) { //Requested current is higher than actual
+          && (ui16_controller_adc_battery_current_target > (uint16_t)ui16_adc_battery_current_filtered)) { //Requested current is higher than actual
 			// reset duty cycle ramp down counter (filter)
             ui8_counter_duty_cycle_ramp_down = 0;
             // ramp up duty cycle

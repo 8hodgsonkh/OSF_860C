@@ -187,7 +187,7 @@ static uint8_t ui8_smooth_start_counter_set_temp = SMOOTH_START_RAMP_DEFAULT;
 
 // startup assist
 static uint8_t ui8_startup_assist_flag = 0;
-static uint8_t ui8_startup_assist_adc_battery_current_target = 0;
+static uint16_t ui16_startup_assist_adc_battery_current_target = 0;
 
 // UART
 #define UART_NUMBER_DATA_BYTES_TO_RECEIVE   88
@@ -303,7 +303,7 @@ void ebike_app_controller(void) // is called every 25ms by main()
 	
     
     // Calculate filtered Battery Current (Ampx5)
-    ui8_battery_current_filtered_x5 = (uint8_t)(((uint16_t) ui8_adc_battery_current_filtered * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) / 20);
+    ui8_battery_current_filtered_x5 = (uint8_t)(((uint16_t) ui16_adc_battery_current_filtered * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) / 20);
 	
 	// Calculate filtered Motor Current (Ampx5)
     ui8_motor_current_filtered_x5 = (uint8_t)(((uint16_t) ui16_adc_motor_phase_current * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) / 20);
@@ -382,7 +382,7 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 	// field weakening enable
 	if ((ui8_field_weakening_feature_enabled)
 		&& (ui16_motor_speed_erps > MOTOR_SPEED_FIELD_WEAKENING_MIN)
-		&& (ui8_adc_battery_current_filtered < ui16_controller_adc_battery_current_target)
+		&& (ui16_adc_battery_current_filtered < ui16_controller_adc_battery_current_target)
 		&& (!ui8_adc_throttle_assist)) {
 			ui8_field_weakening_erps_delta = ui16_motor_speed_erps - MOTOR_SPEED_FIELD_WEAKENING_MIN;
 			ui8_fw_hall_counter_offset_max = ui8_field_weakening_erps_delta >> 5;
@@ -533,7 +533,7 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 	// for debug
 	// calculate an average in mA (to find parameters giving lowest current)
 	//ui32_current_1_rotation_ma = (ui32_adc_battery_current_1_rotation_15b * 10 * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) >> 5;
-	ui32_current_1_rotation_ma = (ui8_adc_battery_current_filtered * 10 * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) ;
+	ui32_current_1_rotation_ma = (ui16_adc_battery_current_filtered * 10 * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) ;
 	
 	ui32_battery_current_mA_acc += ui32_current_1_rotation_ma;
 	ui32_battery_current_mA_cnt--;
@@ -740,7 +740,7 @@ static void apply_power_assist(void)
 		apply_startup_boost();
 	}
 	
-	if ((ui8_pedal_cadence_RPM)||(ui8_startup_assist_adc_battery_current_target)) {
+	if ((ui8_pedal_cadence_RPM)||(ui16_startup_assist_adc_battery_current_target)) {
 		// calculate torque on pedals + torque startup boost
 		uint32_t ui32_pedal_torque_x100 = (uint32_t)(ui16_adc_pedal_torque_delta * ui8_pedal_torque_per_10_bit_ADC_step_x100);
 	
@@ -783,13 +783,13 @@ static void apply_power_assist(void)
 	
 		// set startup assist battery current target
 		if (ui8_startup_assist_flag) {
-			if (ui16_adc_battery_current_target > ui8_startup_assist_adc_battery_current_target) {
-				ui8_startup_assist_adc_battery_current_target = ui16_adc_battery_current_target;
+			if (ui16_adc_battery_current_target > ui16_startup_assist_adc_battery_current_target) {
+				ui16_startup_assist_adc_battery_current_target = ui16_adc_battery_current_target;
 			}
-			ui16_adc_battery_current_target = ui8_startup_assist_adc_battery_current_target;
+			ui16_adc_battery_current_target = ui16_startup_assist_adc_battery_current_target;
 		}
 		else {
-			ui8_startup_assist_adc_battery_current_target = 0;
+			ui16_startup_assist_adc_battery_current_target = 0;
 		}
 	
 		// set duty cycle target
@@ -825,7 +825,7 @@ static void apply_torque_assist(void)
 
     // calculate torque assistance
     if (((ui16_adc_pedal_torque_delta)&&(ui8_pedal_cadence_RPM))
-	  ||(ui8_startup_assist_adc_battery_current_target)) {
+	  ||(ui16_startup_assist_adc_battery_current_target)) {
         // get the torque assist factor
         uint8_t ui8_torque_assist_factor = ui8_riding_mode_parameter;
 
@@ -846,13 +846,13 @@ static void apply_torque_assist(void)
 		
 		// set startup assist battery current target
 		if (ui8_startup_assist_flag) {
-			if (ui16_adc_battery_current_target > ui8_startup_assist_adc_battery_current_target) {
-				ui8_startup_assist_adc_battery_current_target = ui16_adc_battery_current_target;
+			if (ui16_adc_battery_current_target > ui16_startup_assist_adc_battery_current_target) {
+				ui16_startup_assist_adc_battery_current_target = ui16_adc_battery_current_target;
 			}
-			ui16_adc_battery_current_target = ui8_startup_assist_adc_battery_current_target;
+			ui16_adc_battery_current_target = ui16_startup_assist_adc_battery_current_target;
 		}
 		else {
-			ui8_startup_assist_adc_battery_current_target = 0;
+			ui16_startup_assist_adc_battery_current_target = 0;
 		}
 		
 		// set duty cycle target
@@ -924,7 +924,7 @@ static void apply_emtb_assist(void)
 	}
 	
 	if (((ui16_adc_pedal_torque_delta)&&(ui8_pedal_cadence_RPM))
-	  ||(ui8_startup_assist_adc_battery_current_target)) {
+	  ||(ui16_startup_assist_adc_battery_current_target)) {
 		
 		// for compatibility with v20.1C-4.4 display
 		if (ui8_riding_mode_parameter < 21) {
@@ -964,13 +964,13 @@ static void apply_emtb_assist(void)
 		
 		// set startup assist battery current target
 		if (ui8_startup_assist_flag) {
-			if (ui16_adc_battery_current_target > ui8_startup_assist_adc_battery_current_target) {
-				ui8_startup_assist_adc_battery_current_target = ui16_adc_battery_current_target;
+			if (ui16_adc_battery_current_target > ui16_startup_assist_adc_battery_current_target) {
+				ui16_startup_assist_adc_battery_current_target = ui16_adc_battery_current_target;
 			}
-			ui16_adc_battery_current_target = ui8_startup_assist_adc_battery_current_target;
+			ui16_adc_battery_current_target = ui16_startup_assist_adc_battery_current_target;
 		}
 		else {
-			ui8_startup_assist_adc_battery_current_target = 0;
+			ui16_startup_assist_adc_battery_current_target = 0;
 		}
 		
         // set duty cycle target
@@ -1009,7 +1009,7 @@ static void apply_hybrid_assist(void)
 		ui8_pedal_cadence_RPM = 1;
 	}
 	
-	if ((ui8_pedal_cadence_RPM)||(ui8_startup_assist_adc_battery_current_target)) {
+	if ((ui8_pedal_cadence_RPM)||(ui16_startup_assist_adc_battery_current_target)) {
 		// calculate torque assistance
 		if (ui16_adc_pedal_torque_delta) {
 			// get the torque assist factor
@@ -1056,13 +1056,13 @@ static void apply_hybrid_assist(void)
 	
 		// set startup assist battery current target
 		if (ui8_startup_assist_flag) {
-			if (ui16_adc_battery_current_target > ui8_startup_assist_adc_battery_current_target) {
-				ui8_startup_assist_adc_battery_current_target = ui16_adc_battery_current_target;
+			if (ui16_adc_battery_current_target > ui16_startup_assist_adc_battery_current_target) {
+				ui16_startup_assist_adc_battery_current_target = ui16_adc_battery_current_target;
 			}
-			ui16_adc_battery_current_target = ui8_startup_assist_adc_battery_current_target;
+			ui16_adc_battery_current_target = ui16_startup_assist_adc_battery_current_target;
 		}
 		else {
-			ui8_startup_assist_adc_battery_current_target = 0;
+			ui16_startup_assist_adc_battery_current_target = 0;
 		}
 	
 		// set duty cycle target
@@ -2624,7 +2624,7 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 
 		// first 8 bits of adc_motor_current
 		//ui8_tx_buffer[26] = (uint8_t) (ui16_adc_battery_current & 0xff);
-		ui8_tx_buffer[26] = ui8_adc_battery_current_filtered;
+		ui8_tx_buffer[26] = ui16_adc_battery_current_filtered;
 	  
 		ui8_len += 24;
 		break;
