@@ -1,0 +1,29 @@
+From ee9064db39b5f057b7c34fa3cb27a04e0310134d Mon Sep 17 00:00:00 2001
+From: 8hodgsonkh <hodgsonkh@gmail.com>
+Date: Thu, 2 Oct 2025 19:50:30 +0100
+Subject: [PATCH] WIP: force 30A + ui16 throttle mapping + widen targets
+
+---
+ .../0001-ebike_app_force_30A_and_ui16_mapping.patch               | 0
+ .../0002-motor_h_widen_controller_target.patch                    | 0
+ .../0003-motor_c_widen_controller_target.patch                    | 0
+ 3 files changed, 0 insertions(+), 0 deletions(-)
+ rename "patches\342\201\2040001-ebike_app_force_30A_and_ui16_mapping.patch" => patches/0001-ebike_app_force_30A_and_ui16_mapping.patch (100%)
+ rename "patches\342\201\2040002-motor_h_widen_controller_target.patch" => patches/0002-motor_h_widen_controller_target.patch (100%)
+ rename "patches\342\201\2040003-motor_c_widen_controller_target.patch" => patches/0003-motor_c_widen_controller_target.patch (100%)
+
+diff --git "a/patches\342\201\2040001-ebike_app_force_30A_and_ui16_mapping.patch" b/patches/0001-ebike_app_force_30A_and_ui16_mapping.patch
+similarity index 100%
+rename from "patches\342\201\2040001-ebike_app_force_30A_and_ui16_mapping.patch"
+rename to patches/0001-ebike_app_force_30A_and_ui16_mapping.patch
+diff --git "a/patches\342\201\2040002-motor_h_widen_controller_target.patch" b/patches/0002-motor_h_widen_controller_target.patch
+similarity index 100%
+rename from "patches\342\201\2040002-motor_h_widen_controller_target.patch"
+rename to patches/0002-motor_h_widen_controller_target.patch
+diff --git "a/patches\342\201\2040003-motor_c_widen_controller_target.patch" b/patches/0003-motor_c_widen_controller_target.patch
+similarity index 100%
+rename from "patches\342\201\2040003-motor_c_widen_controller_target.patch"
+rename to patches/0003-motor_c_widen_controller_target.patch
+-- 
+2.51.0
+

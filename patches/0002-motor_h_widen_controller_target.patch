@@ -1,5 +1,0 @@
-*** a/motor.h
---- b/motor.h
-***************
-- extern volatile uint8_t ui8_controller_adc_battery_current_target;
-+ extern volatile uint16_t ui16_controller_adc_battery_current_target;

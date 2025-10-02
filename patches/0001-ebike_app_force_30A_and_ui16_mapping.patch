@@ -54,8 +54,7 @@
   		ui8_adc_throttle_assist = 0;
   	}
   }
-***************
-*** 2476,2510 ****
+2476,2510 
 - 		// calculate max battery current in ADC steps
 - 		// from the received battery current limit & power limit
 - 		if (ui8_target_battery_max_power_div25 != ui8_target_battery_max_power_div25_temp) {

@@ -51,8 +51,8 @@ static uint8_t ui8_voltage_cut_off_flag = 0;
 static uint16_t ui16_wheel_perimeter = 2050 ;               	// 26'' wheel: 2050 mm perimeter
 static uint8_t ui8_wheel_speed_max = 25;                  		// 25 Km/h
 uint8_t ui8_pedal_torque_per_10_bit_ADC_step_x100 = 67;
-static uint8_t ui8_target_battery_max_power_div25 = 20;    		// 500W (500/25 = 20)
-static uint8_t ui8_target_battery_max_power_div25_temp = 0;
+//static uint8_t ui8_target_battery_max_power_div25 = 20;    		// 500W (500/25 = 20)
+//static uint8_t ui8_target_battery_max_power_div25_temp = 0;
 static uint8_t ui8_optional_ADC_function = 0;               	// 0 = no function
 
 // system
@@ -376,13 +376,13 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
     // reset control variables (safety)
     ui8_duty_cycle_ramp_up_inverse_step = PWM_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_DEFAULT;
     ui8_duty_cycle_ramp_down_inverse_step = PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_DEFAULT;
-    ui8_adc_battery_current_target = 0;
+    ui16_adc_battery_current_target = 0;
     ui8_duty_cycle_target = 0;
 	
 	// field weakening enable
 	if ((ui8_field_weakening_feature_enabled)
 		&& (ui16_motor_speed_erps > MOTOR_SPEED_FIELD_WEAKENING_MIN)
-		&& (ui8_adc_battery_current_filtered < ui8_controller_adc_battery_current_target)
+		&& (ui8_adc_battery_current_filtered < ui16_controller_adc_battery_current_target)
 		&& (!ui8_adc_throttle_assist)) {
 			ui8_field_weakening_erps_delta = ui16_motor_speed_erps - MOTOR_SPEED_FIELD_WEAKENING_MIN;
 			ui8_fw_hall_counter_offset_max = ui8_field_weakening_erps_delta >> 5;
@@ -405,7 +405,7 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 	// added by mstrens (test mode flag)
 	 // ********************* here the 2 main ways to run the motor (one for test/calibration, the other for normal use) *****************
 	if (ui8_test_mode_flag == NORMAL_RUNNING_MODE) {
-    // select riding mode and calculate ui8_adc_battery_current_target and ui8_duty_cycle_target is 255 (or 0)
+    // select riding mode and calculate ui16_adc_battery_current_target and ui8_duty_cycle_target is 255 (or 0)
     //        It also adapt the ramp up and down inverse step that has an impact on how fast the motor react to a change.
 		switch (ui8_riding_mode) {
 			case POWER_ASSIST_MODE: apply_power_assist(); break;
@@ -422,13 +422,13 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 		ui8_duty_cycle_ramp_up_inverse_step = PWM_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_DEFAULT;     // 194
 		ui8_duty_cycle_ramp_down_inverse_step = PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_DEFAULT;  //73
 		// set current target to the testing value and check with max
-		ui8_adc_battery_current_target = (uint16_t) ui8_battery_current_target_testing *100 / BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100;
-		if (ui8_adc_battery_current_target > ADC_10_BIT_BATTERY_CURRENT_MAX)
-				ui8_adc_battery_current_target = ADC_10_BIT_BATTERY_CURRENT_MAX;
+		ui16_adc_battery_current_target = (uint16_t) ui8_battery_current_target_testing *100 / BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100;
+		if (ui16_adc_battery_current_target > ADC_10_BIT_BATTERY_CURRENT_MAX)
+				ui16_adc_battery_current_target = ADC_10_BIT_BATTERY_CURRENT_MAX;
 		// in case of error, force current target to 0 to avoid that motor starts again (with code for motor enable)
 		// todo : added by mstrens change ui8_system_state because 860c uses another field
 		if(	ui8_m_system_state )  {
-			ui8_adc_battery_current_target = 0;
+			ui16_adc_battery_current_target = 0;
 		}	
 		// set duty cycle target to the tesing value and check against max
 		ui8_duty_cycle_target = ui8_duty_cycle_target_testing;
@@ -455,7 +455,7 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 			break;
     }
 
-    // speed limit :  reduce ui8_adc_battery_current_target progressively (up to 0) when close to speed limit (or exceed)
+    // speed limit :  reduce ui16_adc_battery_current_target progressively (up to 0) when close to speed limit (or exceed)
     apply_speed_limit();
 	
 	// check if motor init delay has to be done (from v.1.1.0)
@@ -556,13 +556,13 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 	  || ((ui8_m_system_state)&&(!ui8_assist_with_error_enabled))) {
         ui8_controller_duty_cycle_ramp_up_inverse_step = PWM_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_DEFAULT;
 		ui8_controller_duty_cycle_ramp_down_inverse_step = PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_MIN;
-		ui8_controller_adc_battery_current_target = 0;
+		ui16_controller_adc_battery_current_target = 0;
 		ui8_controller_duty_cycle_target = 0;
     }
 	else { // motor can run (no safety issue)
         // limit max current if higher than configured hardware limit (safety)
-        if (ui8_adc_battery_current_max > ADC_10_BIT_BATTERY_CURRENT_MAX) {
-            ui8_adc_battery_current_max = ADC_10_BIT_BATTERY_CURRENT_MAX;
+        if (ui16_adc_battery_current_max > ADC_10_BIT_BATTERY_CURRENT_MAX) {
+            ui16_adc_battery_current_max = ADC_10_BIT_BATTERY_CURRENT_MAX;
         }
 
         // limit target current if higher than max value (safety)
@@ -606,7 +606,7 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 			|| (ui8_m_system_state & ERROR_THROTTLE)
 			|| (ui8_m_system_state & ERROR_FATAL)
 			|| ((ui16_motor_speed_erps == 0u)
-				&& (ui8_adc_battery_current_target == 0u)
+				&& (ui16_adc_battery_current_target == 0u)
 				&& (ui8_g_duty_cycle == 0u)))) {
         ui8_motor_enabled = 0;
         motor_disable_pwm();
@@ -614,7 +614,7 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 	else if (!ui8_motor_enabled
 			&& (!ui8_brake_state)
 			&& (ui16_motor_speed_erps < ERPS_SPEED_OF_MOTOR_REENABLING) // enable the motor only if it rotates slowly or is stopped
-			&& (ui8_adc_battery_current_target > 0U)) {
+			&& (ui16_adc_battery_current_target > 0U)) {
 		ui8_motor_enabled = 1;
 		ui8_g_duty_cycle = 0;
 		//ui8_g_duty_cycle = PWM_DUTY_CYCLE_STARTUP;
@@ -626,13 +626,13 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 
 	/*  is not in 860C tsdz2 version ?????
 	// current limit with power limit
-	ui8_adc_battery_current_max_temp_2 = (uint8_t)((uint32_t)(ui32_adc_battery_power_max_x1000_array[m_configuration_variables.ui8_street_mode_enabled]
+	ui16_adc_battery_current_max_temp_2 = (uint8_t)((uint32_t)(ui32_adc_battery_power_max_x1000_array[m_configuration_variables.ui8_street_mode_enabled]
 		/ ui16_battery_voltage_filtered_x1000));
 	
 	// set max battery current
-	ui8_adc_battery_current_max = ui8_adc_battery_current_max_temp_1;
+	ui16_adc_battery_current_max = ui16_adc_battery_current_max_temp_1;
 			
-	mstest6=ui8_adc_battery_current_target;
+	mstest6=ui16_adc_battery_current_target;
 	*/
 }
 
@@ -774,26 +774,26 @@ static void apply_power_assist(void)
 		set_motor_ramp();
 	
 		// set battery current target
-		if (ui16_adc_battery_current_target > ui8_adc_battery_current_max) {
-			ui8_adc_battery_current_target = ui8_adc_battery_current_max;
+		if (ui16_adc_battery_current_target > ui16_adc_battery_current_max) {
+			ui16_adc_battery_current_target = ui16_adc_battery_current_max;
 		}
 		else {
-			ui8_adc_battery_current_target = ui16_adc_battery_current_target;
+			ui16_adc_battery_current_target = ui16_adc_battery_current_target;
 		}
 	
 		// set startup assist battery current target
 		if (ui8_startup_assist_flag) {
-			if (ui8_adc_battery_current_target > ui8_startup_assist_adc_battery_current_target) {
-				ui8_startup_assist_adc_battery_current_target = ui8_adc_battery_current_target;
+			if (ui16_adc_battery_current_target > ui8_startup_assist_adc_battery_current_target) {
+				ui8_startup_assist_adc_battery_current_target = ui16_adc_battery_current_target;
 			}
-			ui8_adc_battery_current_target = ui8_startup_assist_adc_battery_current_target;
+			ui16_adc_battery_current_target = ui8_startup_assist_adc_battery_current_target;
 		}
 		else {
 			ui8_startup_assist_adc_battery_current_target = 0;
 		}
 	
 		// set duty cycle target
-		if (ui8_adc_battery_current_target) {
+		if (ui16_adc_battery_current_target) {
 			ui8_duty_cycle_target = PWM_DUTY_CYCLE_MAX;
 		}
 		else {
@@ -837,33 +837,33 @@ static void apply_torque_assist(void)
 		set_motor_ramp();
 		
         // set battery current target
-        if (ui16_adc_battery_current_target_torque_assist > ui8_adc_battery_current_max) {
-            ui8_adc_battery_current_target = ui8_adc_battery_current_max;
+        if (ui16_adc_battery_current_target_torque_assist > ui16_adc_battery_current_max) {
+            ui16_adc_battery_current_target = ui16_adc_battery_current_max;
         }
 		else {
-            ui8_adc_battery_current_target = ui16_adc_battery_current_target_torque_assist;
+            ui16_adc_battery_current_target = ui16_adc_battery_current_target_torque_assist;
         }
 		
 		// set startup assist battery current target
 		if (ui8_startup_assist_flag) {
-			if (ui8_adc_battery_current_target > ui8_startup_assist_adc_battery_current_target) {
-				ui8_startup_assist_adc_battery_current_target = ui8_adc_battery_current_target;
+			if (ui16_adc_battery_current_target > ui8_startup_assist_adc_battery_current_target) {
+				ui8_startup_assist_adc_battery_current_target = ui16_adc_battery_current_target;
 			}
-			ui8_adc_battery_current_target = ui8_startup_assist_adc_battery_current_target;
+			ui16_adc_battery_current_target = ui8_startup_assist_adc_battery_current_target;
 		}
 		else {
 			ui8_startup_assist_adc_battery_current_target = 0;
 		}
 		
 		// set duty cycle target
-        if (ui8_adc_battery_current_target) {
+        if (ui16_adc_battery_current_target) {
             ui8_duty_cycle_target = PWM_DUTY_CYCLE_MAX;
         }
 		else {
             ui8_duty_cycle_target = 0;
         }
     }
-}// at this point, ui8_adc_battery_current_target is set and ui8_duty_cycle_target is 255 (or 0)
+}// at this point, ui16_adc_battery_current_target is set and ui8_duty_cycle_target is 255 (or 0)
 
 static void apply_cadence_assist(void)
 {
@@ -889,15 +889,15 @@ static void apply_cadence_assist(void)
 		set_motor_ramp();
 		
         // set battery current target
-        if (ui16_adc_battery_current_target_cadence_assist > ui8_adc_battery_current_max) {
-            ui8_adc_battery_current_target = ui8_adc_battery_current_max;
+        if (ui16_adc_battery_current_target_cadence_assist > ui16_adc_battery_current_max) {
+            ui16_adc_battery_current_target = ui16_adc_battery_current_max;
         }
 		else {
-            ui8_adc_battery_current_target = ui16_adc_battery_current_target_cadence_assist;
+            ui16_adc_battery_current_target = ui16_adc_battery_current_target_cadence_assist;
         }
 		
 		// set duty cycle target
-        if (ui8_adc_battery_current_target) {
+        if (ui16_adc_battery_current_target) {
             ui8_duty_cycle_target = PWM_DUTY_CYCLE_MAX;
         }
 		else {
@@ -955,26 +955,26 @@ static void apply_emtb_assist(void)
 		set_motor_ramp();
 		
         // set battery current target
-        if (ui16_adc_battery_current_target_eMTB_assist > ui8_adc_battery_current_max) {
-            ui8_adc_battery_current_target = ui8_adc_battery_current_max;
+        if (ui16_adc_battery_current_target_eMTB_assist > ui16_adc_battery_current_max) {
+            ui16_adc_battery_current_target = ui16_adc_battery_current_max;
         }
 		else {
-            ui8_adc_battery_current_target = ui16_adc_battery_current_target_eMTB_assist;
+            ui16_adc_battery_current_target = ui16_adc_battery_current_target_eMTB_assist;
         }
 		
 		// set startup assist battery current target
 		if (ui8_startup_assist_flag) {
-			if (ui8_adc_battery_current_target > ui8_startup_assist_adc_battery_current_target) {
-				ui8_startup_assist_adc_battery_current_target = ui8_adc_battery_current_target;
+			if (ui16_adc_battery_current_target > ui8_startup_assist_adc_battery_current_target) {
+				ui8_startup_assist_adc_battery_current_target = ui16_adc_battery_current_target;
 			}
-			ui8_adc_battery_current_target = ui8_startup_assist_adc_battery_current_target;
+			ui16_adc_battery_current_target = ui8_startup_assist_adc_battery_current_target;
 		}
 		else {
 			ui8_startup_assist_adc_battery_current_target = 0;
 		}
 		
         // set duty cycle target
-        if (ui8_adc_battery_current_target) {
+        if (ui16_adc_battery_current_target) {
             ui8_duty_cycle_target = PWM_DUTY_CYCLE_MAX;
         }
 		else {
@@ -1047,26 +1047,26 @@ static void apply_hybrid_assist(void)
 		set_motor_ramp();
 	
 		// set battery current target
-		if (ui16_adc_battery_current_target > ui8_adc_battery_current_max) {
-			ui8_adc_battery_current_target = ui8_adc_battery_current_max;
+		if (ui16_adc_battery_current_target > ui16_adc_battery_current_max) {
+			ui16_adc_battery_current_target = ui16_adc_battery_current_max;
 		}
 		else {
-			ui8_adc_battery_current_target = ui16_adc_battery_current_target;
+			ui16_adc_battery_current_target = ui16_adc_battery_current_target;
 		}
 	
 		// set startup assist battery current target
 		if (ui8_startup_assist_flag) {
-			if (ui8_adc_battery_current_target > ui8_startup_assist_adc_battery_current_target) {
-				ui8_startup_assist_adc_battery_current_target = ui8_adc_battery_current_target;
+			if (ui16_adc_battery_current_target > ui8_startup_assist_adc_battery_current_target) {
+				ui8_startup_assist_adc_battery_current_target = ui16_adc_battery_current_target;
 			}
-			ui8_adc_battery_current_target = ui8_startup_assist_adc_battery_current_target;
+			ui16_adc_battery_current_target = ui8_startup_assist_adc_battery_current_target;
 		}
 		else {
 			ui8_startup_assist_adc_battery_current_target = 0;
 		}
 	
 		// set duty cycle target
-		if (ui8_adc_battery_current_target) {
+		if (ui16_adc_battery_current_target) {
 			ui8_duty_cycle_target = PWM_DUTY_CYCLE_MAX;
 		}
 		else {
@@ -1180,7 +1180,7 @@ static void apply_walk_assist(void)
 	ui8_duty_cycle_ramp_down_inverse_step = PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_DEFAULT;
 	
 	// set battery current target
-	ui8_adc_battery_current_target = ui8_min(WALK_ASSIST_ADC_BATTERY_CURRENT_MAX, ui8_adc_battery_current_max);
+	ui16_adc_battery_current_target = ui8_min(WALK_ASSIST_ADC_BATTERY_CURRENT_MAX, ui16_adc_battery_current_max);
 	
 	// set duty cycle target
 	ui8_duty_cycle_target = ui8_walk_assist_duty_cycle_target;
@@ -1266,7 +1266,7 @@ static void apply_cruise(void)
         ui8_duty_cycle_ramp_down_inverse_step = PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_DEFAULT;
 		
 		// set battery current target
-		ui8_adc_battery_current_target = ui8_adc_battery_current_max;
+		ui16_adc_battery_current_target = ui16_adc_battery_current_max;
 		
 		// set duty cycle target  |  map the control output to an appropriate target PWM value
 		ui8_duty_cycle_target = map_ui8((uint8_t) (i16_control_output >> 2),
@@ -1293,7 +1293,7 @@ static void apply_calibration_assist(void)
     ui8_duty_cycle_ramp_down_inverse_step = PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_MIN;
 
     // set battery current target
-    ui8_adc_battery_current_target = ui8_adc_battery_current_max;
+    ui16_adc_battery_current_target = ui16_adc_battery_current_max;
 
     // set duty cycle target
     ui8_duty_cycle_target = ui8_calibration_assist_duty_cycle_target;
@@ -1406,14 +1406,14 @@ static void apply_temperature_limiting(void)
 
     // min temperature value can not be equal or higher than max temperature value
     if (ui8_motor_temperature_min_value_to_limit >= ui8_motor_temperature_max_value_to_limit) {
-        ui8_adc_battery_current_target = 0;
+        ui16_adc_battery_current_target = 0;
     }
 	else {
         // adjust target current if motor over temperature limit
-        ui8_adc_battery_current_target = map_ui16((uint16_t) ui16_motor_temperature_filtered_x10,
+        ui16_adc_battery_current_target = map_ui16((uint16_t) ui16_motor_temperature_filtered_x10,
 				(uint16_t) ((uint8_t)ui8_motor_temperature_min_value_to_limit * (uint8_t)10U),
 				(uint16_t) ((uint8_t)ui8_motor_temperature_max_value_to_limit * (uint8_t)10U),
-				ui8_adc_battery_current_target,
+				ui16_adc_battery_current_target,
 				0);
 	}
 }
@@ -1427,17 +1427,17 @@ static void apply_speed_limit(void)
 		
 		ui8_speed_limit_high_exceeded = 0;
 		if (ui16_wheel_speed_x10 > speed_limit_high) {
-			if (ui8_adc_battery_current_target > 0U) {
+			if (ui16_adc_battery_current_target > 0U) {
 				ui8_speed_limit_high_exceeded = 1;
 			}
 			ui8_duty_cycle_target = 0;
 		}
 		
         // set battery current target
-        ui8_adc_battery_current_target = (uint8_t) map_ui16(ui16_wheel_speed_x10,
+        ui16_adc_battery_current_target = (uint8_t) map_ui16(ui16_wheel_speed_x10,
                 speed_limit_low,
                 speed_limit_high,
-                ui8_adc_battery_current_target,
+                ui16_adc_battery_current_target,
                 0U);
     }
 }
@@ -2494,32 +2494,28 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 		// battery max power target
 		//ui8_target_battery_max_power_div25 = ui8_rx_buffer[6];
 		
-		// calculate max battery current in ADC steps
-		// from the received battery current limit & power limit
-		if (ui8_target_battery_max_power_div25 != ui8_target_battery_max_power_div25_temp) {
-			ui8_target_battery_max_power_div25_temp = ui8_target_battery_max_power_div25;
+		// --- FORCE CONTROLLER BATTERY CURRENT TO 30A; IGNORE DISPLAY + POWER CAP ---
+		 		// whatever the display sent (ui8_rx_buffer[7]) is ignored here
+		 		const uint8_t kControllerAmpsA = 30U;
+		 		ui8_battery_current_max = kControllerAmpsA;
 
-			// amps-only cap: convert "battery_current_max (A)" -> "ADC steps"
-			// 1 step = BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100 / 100 A  (e.g., 16 => 0.16 A/step)
-			uint8_t ui8_adc_battery_current_max_temp_1 =
-			(uint16_t)(((uint16_t)ui8_battery_current_max * 100U) /
-			(uint16_t)BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100);
+		 		// A → ADC10 steps
+		 		ui16_adc_battery_current_max =
+		 			(uint16_t)(((uint16_t)kControllerAmpsA * 100U) /
+		 					   (uint16_t)BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100);
 
-			// set max battery current (ignore display power limit)
-			ui8_adc_battery_current_max = ui8_adc_battery_current_max_temp_1;
+		 		// derive phase-current max from battery-current max
+		 		ui16_temp = (uint16_t)(ui16_adc_battery_current_max * ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX);
+		 		ui16_adc_motor_phase_current_max = (uint16_t)(ui16_temp / ADC_10_BIT_BATTERY_CURRENT_MAX);
+		 		if (ui16_adc_motor_phase_current_max > ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX) {
+			 			ui16_adc_motor_phase_current_max = ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX;
+			 		}
 
-			// derive phase-current ceiling from battery-current ceiling
-			uint16_t ui16_temp = (uint16_t)ui8_adc_battery_current_max * (uint16_t)ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX;
-			ui16_adc_motor_phase_current_max = (uint16_t)(ui16_temp / (uint16_t)ADC_10_BIT_BATTERY_CURRENT_MAX);
-
-			// safety: clamp to hardware phase-current limit
-			if (ui16_adc_motor_phase_current_max > ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX) {
-				ui16_adc_motor_phase_current_max = ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX;
-			}
-
-			// overcurrent trip threshold (in ADC steps)
-			ui8_adc_battery_overcurrent = (uint8_t)(ui8_adc_battery_current_max + ADC_10_BIT_BATTERY_EXTRACURRENT);
-		}
+			 		// bound overcurrent byte (still ui8)
+			 		{
+				 			uint16_t oc = ui16_adc_battery_current_max + ADC_10_BIT_BATTERY_EXTRACURRENT;
+				 			ui8_adc_battery_overcurrent = (oc > 255U) ? 255U : (uint8_t)oc;
+				 		}
 		
 		// walk assist parameter
 		ui8_walk_assist_parameter = ui8_rx_buffer[7];
@@ -2658,8 +2654,8 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 
 		// battery max current
 		//ebike_app_set_battery_max_current(ui8_rx_buffer[7]);
-		ui8_battery_current_max = ui8_rx_buffer[7];
-		ui8_target_battery_max_power_div25_temp = 0;
+		//ui8_battery_current_max = ui8_rx_buffer[7];
+		//ui8_target_battery_max_power_div25_temp = 0;
 
 		ui8_temp = ui8_rx_buffer[8];
 		ui8_startup_boost_enabled = ui8_temp & 1;
@@ -2955,7 +2951,7 @@ void ebike_app_init(void)
 	
 
 	// calculate max adc battery current from the received battery current limit // 13*100/16 = 81
-	ui8_adc_battery_current_max_temp_1 = (uint8_t)((uint16_t)(m_configuration_variables.ui8_battery_current_max * 100U) 
+	ui16_adc_battery_current_max_temp_1 = (uint8_t)((uint16_t)(m_configuration_variables.ui8_battery_current_max * 100U)
 		/ BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100); //16 means 0,16A per adc step (so for TSDZ2 it was 13 * 100 /16 = 81 adc steps)
 
 	// calculate the max adc battery power from the power limit received in offroad mode // 500 *100*1000/16
@@ -2967,7 +2963,7 @@ void ebike_app_init(void)
 		/ BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100; //16
 	
 	// set max motor phase current // used in motor.c to perform some checks // 
-	uint16_t ui16_temp = ui8_adc_battery_current_max_temp_1 * ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX;//187 (if 30A); temp = 81*187 = 15147
+	uint16_t ui16_temp = ui16_adc_battery_current_max_temp_1 * ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX;//187 (if 30A); temp = 81*187 = 15147
 	ui8_adc_motor_phase_current_max = (uint8_t)(ui16_temp / ADC_10_BIT_BATTERY_CURRENT_MAX); //112 (if 18A) so 15147/112 = 135 for TSDZ2
 	// limit max motor phase current if higher than configured hardware limit (safety)
 	if (ui8_adc_motor_phase_current_max > ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX) { //187
