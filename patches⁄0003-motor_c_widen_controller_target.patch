@@ -1,0 +1,22 @@
+*** a/motor.c
+--- b/motor.c
+***************
+- volatile uint8_t ui8_controller_adc_battery_current_target = 0;
++ volatile uint16_t ui16_controller_adc_battery_current_target = 0;
+***************
+*** 715,726 ****
+-         //  - ui8_controller_adc_battery_current_target
+-         if ((ui8_controller_adc_battery_current_target < ui8_adc_battery_current_filtered)  // requested current is lower than actual
++         //  - ui16_controller_adc_battery_current_target (widened)
++         if ((ui16_controller_adc_battery_current_target < (uint16_t)ui8_adc_battery_current_filtered)  // requested current is lower than actual
+              || (/* other conditions */)) {
+              ...
+          }
+***************
+*** 736,747 ****
+-         if ((/* other conditions */)
+-           && (ui8_controller_adc_battery_current_target > ui8_adc_battery_current_filtered)) { //Requested current is higher than actual
++         if ((/* other conditions */)
++           && (ui16_controller_adc_battery_current_target > (uint16_t)ui8_adc_battery_current_filtered)) { // Requested current is higher than actual
+              ...
+          }

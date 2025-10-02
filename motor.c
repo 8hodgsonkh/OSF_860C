@@ -75,7 +75,7 @@ volatile uint8_t ui8_controller_duty_cycle_ramp_down_inverse_step = PWM_DUTY_CYC
 volatile uint16_t ui16_adc_voltage_cut_off = 300*100/BATTERY_VOLTAGE_PER_10_BIT_ADC_STEP_X1000; // 30Volt default value =  300*100/87 in TSDZ2
 volatile uint8_t ui8_adc_battery_current_filtered = 0; // current in adc10 bits units (average on 1 rotation)
 volatile uint32_t ui32_adc_battery_current_1_rotation_15b = 0; // value in 12 +2 +1 = 15 bits (ADC + IIR + average)
-volatile uint8_t ui8_controller_adc_battery_current_target = 0;
+volatile uint16_t ui16_controller_adc_battery_current_target = 0;
 volatile uint8_t ui8_g_duty_cycle = 0;
 volatile uint8_t ui8_controller_duty_cycle_target = 0;
 // Field Weakening Hall offset (added during interpolation)
@@ -718,7 +718,8 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
         //  - ui8_controller_duty_cycle_ramp_down_inverse_step
         // Furthermore,  when ebyke_app_controller start pwm, g_duty_cycle is first set on 30 (= 12%)
         if ((ui8_controller_duty_cycle_target < ui8_g_duty_cycle)                     // requested duty cycle is lower than actual
-          || (ui8_controller_adc_battery_current_target < ui8_adc_battery_current_filtered)  // requested current is lower than actual
+            || ((ui16_controller_adc_battery_current_target < (uint16_t)ui8_adc_battery_current_filtered)
+            // requested current is lower than actual
 		  || (ui16_adc_motor_phase_current >  ui16_adc_motor_phase_current_max)               // motor phase is to high
 //          || (ui16_hall_counter_total < (HALL_COUNTER_FREQ / MOTOR_OVER_SPEED_ERPS))        // Erps is to high
           || (ui16_adc_voltage < ui16_adc_voltage_cut_off)                                  // voltage is to low
@@ -739,7 +740,7 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
             }
         }
 		else if ((ui8_controller_duty_cycle_target > ui8_g_duty_cycle)                     // requested duty cycle is higher than actual
-          && (ui8_controller_adc_battery_current_target > ui8_adc_battery_current_filtered)) { //Requested current is higher than actual
+          && (ui16_controller_adc_battery_current_target > (uint16_t)ui8_adc_battery_current_filtered)) { //Requested current is higher than actual
 			// reset duty cycle ramp down counter (filter)
             ui8_counter_duty_cycle_ramp_down = 0;
             // ramp up duty cycle

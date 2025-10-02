@@ -1,0 +1,105 @@
+*** a/ebike_app.c
+--- b/ebike_app.c
+***************
+*** 1330,1368 ****
+  		if (ui8_adc_throttle_assist) {
+- 			// map ADC throttle value from 0 to max battery current
+- 			uint8_t ui8_adc_battery_current_target_throttle = map_ui8(ui8_adc_throttle_assist,
+- 				(uint8_t) 0,
+- 				(uint8_t) 255,
+- 				(uint8_t) 0,
+- 				(uint8_t) ui8_adc_battery_current_max);
+- 			
+- 			if (ui8_adc_battery_current_target_throttle > ui8_adc_battery_current_target) {
++ 			// map throttle (0..255) → 0..ui16_adc_battery_current_max (16-bit safe)
++ 			uint16_t ui16_adc_battery_current_target_throttle =
++ 				((uint16_t)ui8_adc_throttle_assist * ui16_adc_battery_current_max + 127) / 255;
++ 
++ 			if (ui16_adc_battery_current_target_throttle > ui16_adc_battery_current_target) {
+  				// set motor acceleration / deceleration
+  				if (ui16_wheel_speed_x10 >= 255) {
+  					ui8_duty_cycle_ramp_up_inverse_step = THROTTLE_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_MIN;
+  					ui8_duty_cycle_ramp_down_inverse_step = PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_MIN;
+  				}
+  				else {
+  					ui8_duty_cycle_ramp_up_inverse_step = map_ui8((uint8_t) ui16_wheel_speed_x10,
+  						(uint8_t) 40,
+  						(uint8_t) 255,
+  						(uint8_t) THROTTLE_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_DEFAULT,
+  						(uint8_t) THROTTLE_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_MIN);
+  
+  					ui8_duty_cycle_ramp_down_inverse_step = map_ui8((uint8_t) ui16_wheel_speed_x10,
+  						(uint8_t) 40,
+  						(uint8_t) 255,
+  						(uint8_t) PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_DEFAULT,
+  						(uint8_t) PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_MIN);
+  				}
+  				
+  				// set battery current target
+- 				if (ui8_adc_battery_current_target_throttle > ui8_adc_battery_current_max) {
+- 					ui8_adc_battery_current_target = ui8_adc_battery_current_max;
+- 				}
+- 				else {
+- 					ui8_adc_battery_current_target = ui8_adc_battery_current_target_throttle;
+- 				}
++ 				if (ui16_adc_battery_current_target_throttle > ui16_adc_battery_current_max)
++ 					ui16_adc_battery_current_target = ui16_adc_battery_current_max;
++ 				else
++ 					ui16_adc_battery_current_target = ui16_adc_battery_current_target_throttle;
+  
+  				// set duty cycle target
+  				ui8_duty_cycle_target = PWM_DUTY_CYCLE_MAX;
+  			}
+  		}
+  		ui8_adc_throttle_assist = 0;
+  	}
+  }
+***************
+*** 2476,2510 ****
+- 		// calculate max battery current in ADC steps
+- 		// from the received battery current limit & power limit
+- 		if (ui8_target_battery_max_power_div25 != ui8_target_battery_max_power_div25_temp) {
+- 			ui8_target_battery_max_power_div25_temp = ui8_target_battery_max_power_div25;
+- 			
+- 			uint16_t ui16_adc_battery_current_max_temp_1 = (uint16_t)(ui8_battery_current_max * (uint8_t)100)
+- 					/ (uint16_t)BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100;
+- 
+- 			// calculate max battery current in ADC steps from the received power limit
+- 			uint32_t ui32_battery_current_max_x100 = ((uint32_t) ui8_target_battery_max_power_div25 * 2500000)
+- 					/ ui16_battery_voltage_filtered_x1000;
+- 			uint8_t ui8_adc_battery_current_max_temp_2 = ui32_battery_current_max_x100 / BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100;
+- 
+- 			// set max battery current
+- 			ui8_adc_battery_current_max = ui8_adc_battery_current_max_temp_1;
+- 			// set max motor phase current
+- 			ui16_temp = (uint16_t)(ui8_adc_battery_current_max * ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX);
+- 			ui16_adc_motor_phase_current_max = (uint16_t)(ui16_temp / ADC_10_BIT_BATTERY_CURRENT_MAX);
+- 			// limit max motor phase current if higher than configured hardware limit (safety)
+- 			if (ui16_adc_motor_phase_current_max > ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX) {
+- 			ui16_adc_motor_phase_current_max = ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX;
+- 			}
+- 			// set limit battery overcurrent
+- 			ui8_adc_battery_overcurrent = ui8_adc_battery_current_max + ADC_10_BIT_BATTERY_EXTRACURRENT;
+- 		}
++ 		// --- FORCE CONTROLLER BATTERY CURRENT TO 30A; IGNORE DISPLAY + POWER CAP ---
++ 		// whatever the display sent (ui8_rx_buffer[7]) is ignored here
++ 		const uint8_t kControllerAmpsA = 30U;
++ 		ui8_battery_current_max = kControllerAmpsA;
++ 
++ 		// A → ADC10 steps
++ 		ui16_adc_battery_current_max =
++ 			(uint16_t)(((uint16_t)kControllerAmpsA * 100U) /
++ 					   (uint16_t)BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100);
++ 
++ 		// derive phase-current max from battery-current max
++ 		ui16_temp = (uint16_t)(ui16_adc_battery_current_max * ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX);
++ 		ui16_adc_motor_phase_current_max = (uint16_t)(ui16_temp / ADC_10_BIT_BATTERY_CURRENT_MAX);
++ 		if (ui16_adc_motor_phase_current_max > ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX) {
++ 			ui16_adc_motor_phase_current_max = ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX;
++ 		}
++ 
++ 		// bound overcurrent byte (still ui8)
++ 		{
++ 			uint16_t oc = ui16_adc_battery_current_max + ADC_10_BIT_BATTERY_EXTRACURRENT;
++ 			ui8_adc_battery_overcurrent = (oc > 255U) ? 255U : (uint8_t)oc;
++ 		}
