@@ -125,7 +125,7 @@ ASFLAGS=
 LDFLAGS=
 
 # Additional / custom libraries to link in to the application.
-LDLIBS=
+LDLIBS+= -lm
 
 # Path to the linker script to use (if empty, use the default linker script).
 LINKER_SCRIPT=

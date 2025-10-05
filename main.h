@@ -12,7 +12,7 @@
 //#include "config.h"
 #include "common.h"
                                     // !!!!!!!!!!!!!!
-#define FIRMWARE_VERSION "0.1.35"      //  !!! this version was derived from 0.1.13 for vlcd5 !!!!!!!!!!
+#define FIRMWARE_VERSION "0.1.36"      //  !!! this version was derived from 0.1.13 for vlcd5 !!!!!!!!!!
 //#define MAIN_CONFIGURATOR_VERSION 2   // for configurator (must be the same as in xls sheet)
 //#define SUB_CONFIGURATOR_VERSION 1    // is not used (just for reference)
 
@@ -53,10 +53,10 @@
 #define USE_IRQ_FOR_HALL (0) // 1 = use irq; 0 = use capture
 
 // note when USE_SPIDER_LOGIC_FOR_TORQUE > 0, KATANA logic is not used; to use KATANA, USE_SPIDER must be 0
-#define USE_SPIDER_LOGIC_FOR_TORQUE (0) // (1) = use Spider logic with a buffer of 20 value over one rotation.
+#define USE_SPIDER_LOGIC_FOR_TORQUE (2) // (1) = use Spider logic with a buffer of 20 value over one rotation.
                                         // (2) = mstrens variant using "expected" concept + smoothing
                                         // (3) = Spider logic, no reset of buffer when torque = 0, avg when less than 20.
-#define USE_KATANA1234_LOGIC_FOR_TORQUE (2) // (1) = use katana with an average of n last value; big changes getting more priority 
+#define USE_KATANA1234_LOGIC_FOR_TORQUE (0) // (1) = use katana with an average of n last value; big changes getting more priority
                                             // (0) = use a logic based on max of current torque, max current rotation, max previous rotation
                                             // (2) use katana logic with progressive resize depending on cadence
 //#define APPLY_ENHANCED_POSITIONING (0) // 0 = do not apply; 1 = apply enhanced
@@ -66,6 +66,12 @@
 // those rules apply only when rotor rotation speed is fast enough otherwise we use "normal positioning"
 // Normal positionning means that extrapolation is based on each pattern change and on speed on last 360°
 
+#define TYPE_OF_FILTER_FOR_CURRENT (0) // 0 = moving average over 64 values max (this is normally used)
+                                // 1 = moving average over a full rotation 
+
+#define DYNAMIC_LEAD_ANGLE      (1)   // (0) no dynamic
+                                      // (1) dynamic based on Id and a PID + optimiser 
+                                      // (2) dynamic based on Idc and a optimiser (= esc) 
 
 // *************** from here we have more general parameters 
 
@@ -88,7 +94,7 @@
 // wheel speed parameters
 #define OEM_WHEEL_SPEED_DIVISOR			384 // at 19 KHz
 
-#define PWM_CYCLES_SECOND			(64000000/(PWM_COUNTER_MAX*2)) // 55.5us (PWM period) 18 Khz // for TSDZ2, it was 16000000
+#define PWM_CYCLES_SECOND			(64000000/(PWM_COUNTER_MAX*2)) // 19000 = 55.5us (PWM period) 18 Khz // for TSDZ2, it was 16000000
 
 /*---------------------------------------------------------
  NOTE: regarding duty cycle (PWM) ramping
