@@ -53,10 +53,10 @@
 #define USE_IRQ_FOR_HALL (0) // 1 = use irq; 0 = use capture
 
 // note when USE_SPIDER_LOGIC_FOR_TORQUE > 0, KATANA logic is not used; to use KATANA, USE_SPIDER must be 0
-#define USE_SPIDER_LOGIC_FOR_TORQUE (2) // (1) = use Spider logic with a buffer of 20 value over one rotation.
+#define USE_SPIDER_LOGIC_FOR_TORQUE (0) // (1) = use Spider logic with a buffer of 20 value over one rotation.
                                         // (2) = mstrens variant using "expected" concept + smoothing
                                         // (3) = Spider logic, no reset of buffer when torque = 0, avg when less than 20.
-#define USE_KATANA1234_LOGIC_FOR_TORQUE (0) // (1) = use katana with an average of n last value; big changes getting more priority
+#define USE_KATANA1234_LOGIC_FOR_TORQUE (1) // (1) = use katana with an average of n last value; big changes getting more priority
                                             // (0) = use a logic based on max of current torque, max current rotation, max previous rotation
                                             // (2) use katana logic with progressive resize depending on cadence
 //#define APPLY_ENHANCED_POSITIONING (0) // 0 = do not apply; 1 = apply enhanced
@@ -69,7 +69,7 @@
 #define TYPE_OF_FILTER_FOR_CURRENT (0) // 0 = moving average over 64 values max (this is normally used)
                                 // 1 = moving average over a full rotation 
 
-#define DYNAMIC_LEAD_ANGLE      (1)   // (0) no dynamic
+#define DYNAMIC_LEAD_ANGLE      (2)   // (0) no dynamic
                                       // (1) dynamic based on Id and a PID + optimiser 
                                       // (2) dynamic based on Idc and a optimiser (= esc) 
 
@@ -280,7 +280,11 @@ HALL_COUNTER_OFFSET_UP:    29 -> 44
 
 // adc current (38 = 6A, 50 = 8A, 112 = 18A, 124 = 20A , 136 = 22A, 143 = 23A, 187 = 30A)
 #define ADC_10_BIT_BATTERY_EXTRACURRENT				50  //  8 amps
-#define ADC_10_BIT_BATTERY_CURRENT_MAX				188	// 30 amps // 1 = 0.16 Amp
+// 🔥 Hazza high-amp build
+#define ADC_10_BIT_BATTERY_CURRENT_MAX         188 // 30 A (0.16 A per ADC step)
+
+// 🐱‍👤 Safe / "pussy" build
+//#define ADC_10_BIT_BATTERY_CURRENT_MAX      150 // ~24 A limit (150 * 0.16 = 24 A)
 
 #define ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX			313	// 50 amps // 1 = 0.16 Amp
 /*---------------------------------------------------------
