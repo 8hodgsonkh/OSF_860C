@@ -1217,7 +1217,7 @@ static int64_t pid_integrator = 0;
 static int32_t lead_angle_pid   = 0;
 static int32_t lead_angle_optim = 0;
 static int32_t lead_angle_final = 0;  // utilisé par la génération PWM
-static uint8_t lead_angle_LUT_256 = 0;     // to read a LUT of 256 items (0 360°)
+uint8_t lead_angle_LUT_256 = 0;     // to read a LUT of 256 items (0 360°)
 
 // optimiser
 static int optim_dir = 1;                // direction hill-climbing

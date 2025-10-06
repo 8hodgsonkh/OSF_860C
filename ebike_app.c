@@ -2590,8 +2590,10 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 		ui8_tx_buffer[13] = (uint8_t) (ui16_adc_pedal_torque_delta_no_boost >> 8);
 		
 		// PAS cadence
-		ui8_tx_buffer[14] = ui8_pedal_cadence_RPM;
-		
+		// ui8_tx_buffer[14] = ui8_pedal_cadence_RPM;
+		//LEAD ANGLE COMPARISON
+		extern uint8_t lead_angle_LUT_256;
+		ui8_tx_buffer[14] = lead_angle_LUT_256;
 		// PWM duty_cycle
 		// convert duty-cycle to 0 - 100 %
 		ui16_temp = (uint16_t) ui8_g_duty_cycle;

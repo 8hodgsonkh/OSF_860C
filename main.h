@@ -59,7 +59,7 @@
 #define USE_KATANA1234_LOGIC_FOR_TORQUE (1) // (1) = use katana with an average of n last value; big changes getting more priority
                                             // (0) = use a logic based on max of current torque, max current rotation, max previous rotation
                                             // (2) use katana logic with progressive resize depending on cadence
-//#define APPLY_ENHANCED_POSITIONING (0) // 0 = do not apply; 1 = apply enhanced
+#define APPLY_ENHANCED_POSITIONING (1) // 0 = do not apply; 1 = apply enhanced
 // enhanced means that we use only pattern 1 as reference +
 // that speed for angle extrapolation on next electric rotation includes a correction based on actual error
 // that speed for next rotation is based on the speed on last 180° (and not last 360°)
@@ -69,7 +69,7 @@
 #define TYPE_OF_FILTER_FOR_CURRENT (0) // 0 = moving average over 64 values max (this is normally used)
                                 // 1 = moving average over a full rotation 
 
-#define DYNAMIC_LEAD_ANGLE      (2)   // (0) no dynamic
+#define DYNAMIC_LEAD_ANGLE      (1)   // (0) no dynamic
                                       // (1) dynamic based on Id and a PID + optimiser 
                                       // (2) dynamic based on Idc and a optimiser (= esc) 
 
@@ -126,7 +126,7 @@
 //#define MOTOR_SPEED_FIELD_WEAKENING_MIN			490 // 90 rpm
 //#define ERPS_SPEED_OF_MOTOR_REENABLING				320 // 60 rpm
 //For TSDZ8, I expect that it must be 2 * smaller for the same mecanical speed (4 poles instead of 8)
-#define MOTOR_SPEED_FIELD_WEAKENING_MIN				200 // earlier FW engagement
+#define MOTOR_SPEED_FIELD_WEAKENING_MIN				280 // earlier FW engagement
 
 // for TSDZ8 is must be 2 * smaller (320 for TSDZ2 becomes 160)
 #define ERPS_SPEED_OF_MOTOR_REENABLING						160 // 60 rpm
@@ -136,7 +136,7 @@
 // It seems TSDZ8 motor has an inductance of 180 uH and 4 poles
 // So, TSDZ2 uses a multiplier = 39, TSDZ8 should use 39 * 180 / 135 * 4 / 8 = 26  (foc is based on erps*L*I/V) 
 // I reduce it because erps should be 2X lower due to the reduced number of poles
-#define FOC_ANGLE_MULTIPLIER					26
+#define FOC_ANGLE_MULTIPLIER					29
 
 
 // cadence
