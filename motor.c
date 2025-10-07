@@ -13,7 +13,6 @@
 #include "common.h"
 #include "adc.h"
 #include <math.h>
-
 #include "cy_retarget_io.h"
 //#include "cy_utils.h"
 #if(uCPROBE_GUI_OSCILLOSCOPE == MY_ENABLED)
@@ -330,7 +329,7 @@ __RAM_FUNC void POSIF0_0_IRQHandler(){
 #endif
 
 #if (DYNAMIC_LEAD_ANGLE == (1)) // (1) dynamic based on Id and a PID + optimiser
-__RAM_FUNC static void calculate_id_part1(){  // to be called in begin of ISR 1 when rotor position has been updated and current are measured
+__RAM_FUNC void calculate_id_part1(){  // to be called in begin of ISR 1 when rotor position has been updated and current are measured
     // it measure actual currents but angle must be one one that was apply for PWM and so it is the angle from isr 0 before update.
     //static inline void calculate_id_part1(){  // to be called in first ISR when rotor position has been updated  
         // read the 3 ADC
@@ -748,179 +747,90 @@ ui16_adc_battery_current_filtered = (uint16_t)(ui32_adc_battery_current_15b_movi
 
 #define DEBUG_IRQ1_TIME (0) // 1 = calculate time spent in irq1
 // ************* irq handler 
-__RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  counting DOWN (= 1/4 of 19mhz cycles)    
-//void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  counting DOWN (= 1/4 of 19mhz cycles)    
+__RAM_FUNC void CCU80_1_IRQHandler(){
     #if (DEBUG_IRQ1_TIME == (1))
-    // to debug max time in this iSR
     uint16_t start_ticks  =  XMC_CCU4_SLICE_GetTimerValue(HALL_SPEED_TIMER_HW);
     #endif
 
-    // fill the PWM parameters with the values calculated in the other CCU8 interrupt
-    //XMC_CCU8_SLICE_SetTimerCompareMatch(PHASE_U_TIMER_HW, XMC_CCU8_SLICE_COMPARE_CHANNEL_1 , ui16_a);
-    //XMC_CCU8_SLICE_SetTimerCompareMatch(PHASE_V_TIMER_HW, XMC_CCU8_SLICE_COMPARE_CHANNEL_1 , ui16_b);
-    //XMC_CCU8_SLICE_SetTimerCompareMatch(PHASE_W_TIMER_HW, XMC_CCU8_SLICE_COMPARE_CHANNEL_1 , ui16_c);
     PHASE_U_TIMER_HW->CR1S = (uint32_t) ui16_a;
     PHASE_V_TIMER_HW->CR1S = (uint32_t) ui16_b;
     PHASE_W_TIMER_HW->CR1S = (uint32_t) ui16_c;
-    /* Enable shadow transfer for slice 0,1,2 for CCU80 Kernel */
-	//XMC_CCU8_EnableShadowTransfer(ccu8_0_HW, ((uint32_t)XMC_CCU8_SHADOW_TRANSFER_SLICE_0 |
-	//                                            (uint32_t)XMC_CCU8_SHADOW_TRANSFER_SLICE_1 |
-	//                                            (uint32_t)XMC_CCU8_SHADOW_TRANSFER_SLICE_2 ));
+
     ccu8_0_HW->GCSS = ((uint32_t)XMC_CCU8_SHADOW_TRANSFER_SLICE_0 |
-	                                            (uint32_t)XMC_CCU8_SHADOW_TRANSFER_SLICE_1 |
-	                                            (uint32_t)XMC_CCU8_SHADOW_TRANSFER_SLICE_2 );
-    // update of PWM will occur later on when timer reach O match 
-    
-    /****************************************************************************/
-        // Read all ADC values (right aligned values).
-       // adc values are reduced to 10 bits instead of 12 bits to use the same resolution as tsdz2
-       // note: per vadc group, the result number is the same as the pin number (except for group 1 current sensor)
-        // next line has been moved in irq 0 to save time here
-        //ui16_adc_voltage  = (XMC_VADC_GROUP_GetResult(vadc_0_group_1_HW , 4 ) & 0xFFF) >> 2; // battery gr1 ch6 result 4   in bg
-        // next line has been moved to ebike_app.c to save time here
-        //ui16_adc_torque   = (XMC_VADC_GROUP_GetResult(vadc_0_group_0_HW , 2 ) & 0xFFF) >> 2; // torque gr0 ch7 result 2 in bg p2.2
-        // next line has been moved to ebike_app.c to save time in this irq
-        //ui16_adc_throttle = (XMC_VADC_GROUP_GetResult(vadc_0_group_1_HW , 5 ) & 0xFFF) >> 2; // throttle gr1 ch7 result 5  in bg  p2.5
-        
-        #if (DYNAMIC_LEAD_ANGLE == (1))
-        // read current iu,iv,iw and start calculating Id with cordic (result will be get at the end of ISR 1 to avoid wait time)       
-        calculate_id_part1();
-        #endif
+    (uint32_t)XMC_CCU8_SHADOW_TRANSFER_SLICE_1 |
+    (uint32_t)XMC_CCU8_SHADOW_TRANSFER_SLICE_2 );
 
-        // update foc_angle once per electric rotation (based on fog_flag
-        // foc_angle is added to the position given by hall sensor + interpolation )
-        if (ui8_g_duty_cycle > 0) {
-            // calculate phase current.
-            if (ui8_g_duty_cycle > 10) {
-                ui16_adc_motor_phase_current = (uint16_t)(((uint32_t)ui16_adc_battery_current_filtered << 8) / ui8_g_duty_cycle);
-            } else {
-                ui16_adc_motor_phase_current = ui16_adc_battery_current_filtered;
-            }
-            if (ui8_foc_flag) { // is set on 1 when rotor is at 150° so once per electric rotation
-                //uint16_t ui16_adc_foc_angle_current = ((uint16_t)(ui16_adc_battery_current_filtered ) + (ui16_adc_motor_phase_current )) >> 1;
-                // mstrens : added 128 for better rounding
-                //ui8_foc_flag = ((ui16_adc_foc_angle_current * ui8_foc_angle_multiplicator) + 128) >> 8 ; // multiplier = 39 for 48V tsdz2,
-                ui8_foc_flag = (((uint16_t) ui16_adc_battery_current_filtered * (uint16_t) ui8_foc_angle_multiplicator) + 128) >> 8 ; // multiplier = 39 for 48V tsdz2,
-                // max = 23 *100 / 16 * 40 = 22
-                if (ui8_foc_flag > 29)
-                    ui8_foc_flag = 29;
-                // removed by mstrens because current is already based on an average on 1 rotation
-                //ui8_foc_angle_accumulated = ui8_foc_angle_accumulated - (ui8_foc_angle_accumulated >> 4) + ui8_foc_flag;
-                //ui8_g_foc_angle = ui8_foc_angle_accumulated >> 4;
-                //ui8_foc_flag = 0;
-                // added by mstrens
-                ui8_g_foc_angle = ui8_foc_flag ;
-            }
-        } else { // duty cycle = 0
-            ui16_adc_motor_phase_current = 0;
-            // removed by mstrens
-            //if (ui8_foc_flag) {
-            //    ui8_foc_angle_accumulated = ui8_foc_angle_accumulated - (ui8_foc_angle_accumulated >> 4);
-            //    ui8_g_foc_angle = ui8_foc_angle_accumulated >> 4;
-            //    ui8_foc_flag = 0;
-            //}
-            // added by mstrens
-            ui8_g_foc_angle = 0; 
-            
+    #if (DYNAMIC_LEAD_ANGLE == (1))
+    calculate_id_part1();
+    #endif
+
+    if (ui8_g_duty_cycle > 0) {
+        if (ui8_g_duty_cycle > 10) {
+            ui16_adc_motor_phase_current = (uint16_t)(((uint32_t)ui16_adc_battery_current_filtered << 8) / ui8_g_duty_cycle);
+        } else {
+            ui16_adc_motor_phase_current = ui16_adc_battery_current_filtered;
         }
-        ui8_foc_flag = 0;
+    } else { // duty cycle = 0
+        ui16_adc_motor_phase_current = 0;
+    }
+    // TINA: The old FOC calculation that used to be here is now disabled.
+    ui8_foc_flag = 0; // We still reset this flag.
 
-        // get brake state-
-        ui8_brake_state = XMC_GPIO_GetInput(IN_BRAKE_PORT, IN_BRAKE_PIN) == 0; // Low level means that brake is on
-        
-        // added by mstrens to detect overcurrent and to decrase immediatelu the duty cycle
-        //uint8_t ui8_temp_adc_current = ((XMC_VADC_GROUP_GetResult(vadc_0_group_0_HW , 15 ) & 0xFFFF) +
-	    //								(XMC_VADC_GROUP_GetResult(vadc_0_group_1_HW , 15 ) & 0xFFFF)) >>5  ;  // >>2 for IIR, >>2 for ADC12 to ADC10 , >>1 for averaging		
-	    // changed by mstrens to take care of infineon init for vadc (result 12bits and in reg 1)
-	    uint8_t ui8_temp_adc_current = (XMC_VADC_GROUP_GetResult(vadc_0_group_0_HW , VADC_I4_RESULT_REG ) & 0xFFFF) >> 2;// from 12 to 10bits 
-	    if ( ui8_temp_adc_current > ui8_adc_battery_overcurrent){ // 112+50 in tsdz2 (*0,16A) => 26A
-            ui8_g_duty_cycle -= (ui8_g_duty_cycle >> 2); // reduce immediately dutycycle by 25% to avoid overcurrent in next pwm 
-        }    
-		
+    ui8_brake_state = XMC_GPIO_GetInput(IN_BRAKE_PORT, IN_BRAKE_PIN) == 0;
+
+    uint8_t ui8_temp_adc_current = (XMC_VADC_GROUP_GetResult(vadc_0_group_0_HW , VADC_I4_RESULT_REG ) & 0xFFFF) >> 2;
+    if ( ui8_temp_adc_current > ui8_adc_battery_overcurrent){
+        ui8_g_duty_cycle -= (ui8_g_duty_cycle >> 2);
+    }
+
+    if ((ui8_controller_duty_cycle_target < ui8_g_duty_cycle)
+        || (ui16_controller_adc_battery_current_target < ui16_adc_battery_current_filtered)
+        || (ui16_adc_motor_phase_current >  ui16_adc_motor_phase_current_max)
+        || (ui16_adc_voltage < ui16_adc_voltage_cut_off)
+        || (ui8_brake_state))
+    {
+        ui8_counter_duty_cycle_ramp_up = 0;
+        if (++ui8_counter_duty_cycle_ramp_down > ui8_controller_duty_cycle_ramp_down_inverse_step) {
+            ui8_counter_duty_cycle_ramp_down = 0;
+            if (ui8_fw_hall_counter_offset > 0) {
+                ui8_fw_hall_counter_offset--;
+            } else if (ui8_g_duty_cycle > 0) {
+                ui8_g_duty_cycle--;
+            }
+        }
+    } else if ((ui8_controller_duty_cycle_target > ui8_g_duty_cycle)
+        && (ui16_controller_adc_battery_current_target > ui16_adc_battery_current_filtered)) {
+        ui8_counter_duty_cycle_ramp_down = 0;
+    if (++ui8_counter_duty_cycle_ramp_up > ui8_controller_duty_cycle_ramp_up_inverse_step) {
+        ui8_counter_duty_cycle_ramp_up = 0;
+        if (ui8_g_duty_cycle < PWM_DUTY_CYCLE_STARTUP) {
+            ui8_g_duty_cycle = PWM_DUTY_CYCLE_STARTUP;
+        } else if (ui8_g_duty_cycle < PWM_DUTY_CYCLE_MAX) {
+            ui8_g_duty_cycle++;
+        }
+    }
+        } else if ((ui8_field_weakening_enabled) && (ui8_g_duty_cycle == PWM_DUTY_CYCLE_MAX)) {
+            ui8_counter_duty_cycle_ramp_down = 0;
+            if (++ui8_counter_duty_cycle_ramp_up > ui8_controller_duty_cycle_ramp_up_inverse_step) {
+                ui8_counter_duty_cycle_ramp_up = 0;
+                if (ui8_fw_hall_counter_offset < ui8_fw_hall_counter_offset_max) {
+                    ui8_fw_hall_counter_offset++;
+                }
+            }
+        } else {
+            ui8_counter_duty_cycle_ramp_up = 0;
+            ui8_counter_duty_cycle_ramp_down = 0;
+        }
+
+
+
 
     // to debug
     //uint16_t temp1d  =  XMC_CCU4_SLICE_GetTimerValue(HALL_SPEED_TIMER_HW);
     //temp1d = temp1d - start_ticks;
     //if (temp1d > debug_time_ccu8_irq1d) debug_time_ccu8_irq1d = temp1d; // store the max enlapsed time in the irq
     
-                /****************************************************************************/
-        // PWM duty_cycle controller:
-        // - limit battery undervolt
-        // - limit battery max current
-        // - limit motor max phase current
-        // - limit motor max ERPS
-        // - ramp up/down PWM duty_cycle and/or field weakening angle value
 
-        // check if to decrease, increase or maintain duty cycle
-        //note:
-        // ui16_adc_battery_current_filtered is calculated just here above
-        // ui16_adc_motor_phase_current_max = 135 per default for TSDZ2 (13A *100/16) *187/112 = battery_current convert to ADC10bits *and ratio between adc max for phase and for battery
-        //        is initiaded in void ebike_app_init(void) in ebyke_app.c
-        
-        
-        // every 25ms ebike_app_controller fills
-        //  - ui8_controller_adc_battery_current_target
-        //  - ui8_controller_duty_cycle_target // is usually filled with 255 (= 100%)
-        //  - ui8_controller_duty_cycle_ramp_up_inverse_step
-        //  - ui8_controller_duty_cycle_ramp_down_inverse_step
-        // Furthermore,  when ebyke_app_controller start pwm, g_duty_cycle is first set on 30 (= 12%)
-        if ((ui8_controller_duty_cycle_target < ui8_g_duty_cycle)                     // requested duty cycle is lower than actual
-            || (ui16_controller_adc_battery_current_target < (ui16_adc_battery_current_filtered)
-            // requested current is lower than actual
-		  || (ui16_adc_motor_phase_current >  ui16_adc_motor_phase_current_max)               // motor phase is to high
-//          || (ui16_hall_counter_total < (HALL_COUNTER_FREQ / MOTOR_OVER_SPEED_ERPS))        // Erps is to high
-          || (ui16_adc_voltage < ui16_adc_voltage_cut_off)                                  // voltage is to low
-          || (ui8_brake_state)
-        )) {                                                           // brake is ON
-	  // reset duty cycle ramp up counter (filter)
-            ui8_counter_duty_cycle_ramp_up = 0;
-            // ramp down duty cycle ;  after N iterations at 19 khz 
-            if (++ui8_counter_duty_cycle_ramp_down > ui8_controller_duty_cycle_ramp_down_inverse_step) {
-                ui8_counter_duty_cycle_ramp_down = 0;
-                //  first decrement field weakening angle if set or duty cycle if not
-                if (ui8_fw_hall_counter_offset > 0) {
-                    ui8_fw_hall_counter_offset--;
-                }
-				else if (ui8_g_duty_cycle > 0) {
-                    ui8_g_duty_cycle--;
-				}
-            }
-        }
-		else if ((ui8_controller_duty_cycle_target > ui8_g_duty_cycle)                     // requested duty cycle is higher than actual
-          && (ui16_controller_adc_battery_current_target > (uint16_t)ui16_adc_battery_current_filtered)) { //Requested current is higher than actual
-			// reset duty cycle ramp down counter (filter)
-            ui8_counter_duty_cycle_ramp_down = 0;
-            // ramp up duty cycle
-            if (++ui8_counter_duty_cycle_ramp_up > ui8_controller_duty_cycle_ramp_up_inverse_step) {
-                ui8_counter_duty_cycle_ramp_up = 0;
-                // increment duty cycle
-                if (ui8_g_duty_cycle < PWM_DUTY_CYCLE_STARTUP) {
-                    ui8_g_duty_cycle = PWM_DUTY_CYCLE_STARTUP;
-                }	
-                else if (ui8_g_duty_cycle < PWM_DUTY_CYCLE_MAX) {
-                    if (ui8_g_duty_cycle < PWM_DUTY_CYCLE_MAX) {
-                        ui8_g_duty_cycle++;
-                    }
-                }    
-            }
-        }
-		else if ((ui8_field_weakening_enabled)
-				&& (ui8_g_duty_cycle == PWM_DUTY_CYCLE_MAX)) {
-            // reset duty cycle ramp down counter (filter)
-            ui8_counter_duty_cycle_ramp_down = 0;
-            if (++ui8_counter_duty_cycle_ramp_up > ui8_controller_duty_cycle_ramp_up_inverse_step) {
-               ui8_counter_duty_cycle_ramp_up = 0;               
-               // increment field weakening angle
-               if (ui8_fw_hall_counter_offset < ui8_fw_hall_counter_offset_max) {
-                   ui8_fw_hall_counter_offset++;
-			   }
-            }
-        }
-		else {
-            // duty cycle is where it needs to be so reset ramp counters (filter)
-            ui8_counter_duty_cycle_ramp_up = 0;
-            ui8_counter_duty_cycle_ramp_down = 0;
-        }
     // to debug
     //uint16_t temp1e  =  XMC_CCU4_SLICE_GetTimerValue(HALL_SPEED_TIMER_HW);
     //temp1e = temp1e - start_ticks;
@@ -1217,7 +1127,7 @@ static int64_t pid_integrator = 0;
 static int32_t lead_angle_pid   = 0;
 static int32_t lead_angle_optim = 0;
 static int32_t lead_angle_final = 0;  // utilisé par la génération PWM
-uint8_t lead_angle_LUT_256 = 0;     // to read a LUT of 256 items (0 360°)
+volatile uint8_t lead_angle_LUT_256 = 0;     // to read a LUT of 256 items (0 360°)
 
 // optimiser
 static int optim_dir = 1;                // direction hill-climbing
@@ -1336,7 +1246,7 @@ void apply_PID_on_lead_angle(void) { // return the new lead angle
 
     // Ré-échantillonner 65536->256 en conservant la correspondance angulaire (MSB)
     lead_angle_LUT_256 = (uint8_t)(pwm_angle16 >> 8); // correct mapping 0..255
-    
+    ui8_g_foc_angle = lead_angle_LUT_256;
     return ; 
 }
 
@@ -1402,8 +1312,16 @@ void update_foc_optimiser(void) {
     // printf("optim: avg=%d mA var=%d mA2 sigma=%.2f VAR_LOW=%d VAR_HIGH=%d step=%d\n",
     //       avg, variance, sigma, VAR_LOW, VAR_HIGH, step);
 }
+void run_adc_bias_calibration(void) {
+    // Force the system to calibrate the ADC bias for 2 seconds.
+    // This gives the low-pass filter time to find a stable zero-point.
+    for (int i = 0; i < 200; i++) {
+        update_foc_pid(); // This is the function that contains the calibration logic
 
-
+        // TINA: Crude but effective busy-wait delay, since the HAL function doesn't exist here.
+        for (volatile int d = 0; d < 30000; d++) { __asm("nop"); }
+    }
+}
 /*
 Valeurs pour PID et optimiser pour adapter lead angle en fonction de Id
 This apply to C code here above.

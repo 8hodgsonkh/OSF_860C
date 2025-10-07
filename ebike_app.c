@@ -2579,7 +2579,7 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 			// throttle value with offset removed and mapped to 255
 			ui8_tx_buffer[10] = ui8_throttle_adc_in;
 		}
-		
+
 		// ADC torque_sensor
 		ui8_tx_buffer[11] = (uint8_t) (ui16_adc_torque & 0xff);
 		// ADC torque_sensor (higher bits), this bits are shared with wheel speed bits
@@ -2588,31 +2588,29 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 		// pedal torque delta no boost
 		ui8_tx_buffer[12] = (uint8_t) (ui16_adc_pedal_torque_delta_no_boost & 0xff);
 		ui8_tx_buffer[13] = (uint8_t) (ui16_adc_pedal_torque_delta_no_boost >> 8);
-		
+
 		// PAS cadence
-		// ui8_tx_buffer[14] = ui8_pedal_cadence_RPM;
-		//LEAD ANGLE COMPARISON
-		extern uint8_t lead_angle_LUT_256;
-		ui8_tx_buffer[14] = lead_angle_LUT_256;
+		ui8_tx_buffer[14] = ui8_pedal_cadence_RPM;
+
 		// PWM duty_cycle
 		// convert duty-cycle to 0 - 100 %
 		ui16_temp = (uint16_t) ui8_g_duty_cycle;
 		ui16_temp = (ui16_temp * 100) / PWM_DUTY_CYCLE_MAX;
 		ui8_tx_buffer[15] = (uint8_t) ui16_temp;
-		
-		// motor speed in ERPS 
+
+		// motor speed in ERPS
 		ui8_tx_buffer[16] = (uint8_t) (ui16_motor_speed_erps & 0xff);
 		ui8_tx_buffer[17] = (uint8_t) (ui16_motor_speed_erps >> 8);
-		
+
 		// FOC angle
-		ui8_tx_buffer[18] = ui8_g_foc_angle;
+		ui8_tx_buffer[18] = (ui8_g_foc_angle * 45 + 127) / 255; // map 0-255 → 0-45 deg
 
 		// system state
 		ui8_tx_buffer[19] = ui8_m_system_state;
 
 		// send motor_current_x5
 		ui8_tx_buffer[20] = ui8_motor_current_filtered_x5;
-		
+
 		// wheel_speed_sensor_tick_counter
 		ui8_tx_buffer[21] = (uint8_t) (ui32_wheel_speed_sensor_ticks_total & 0xff);
 		ui8_tx_buffer[22] = (uint8_t) ((ui32_wheel_speed_sensor_ticks_total >> 8) & 0xff);
@@ -2621,11 +2619,8 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 		// pedal torque delta boost
 		ui8_tx_buffer[24] = (uint8_t) (ui16_adc_pedal_torque_delta & 0xff);
 		ui8_tx_buffer[25] = (uint8_t) (ui16_adc_pedal_torque_delta >> 8);
-
-		// first 8 bits of adc_motor_current
-		//ui8_tx_buffer[26] = (uint8_t) (ui16_adc_battery_current & 0xff);
 		ui8_tx_buffer[26] = ui16_adc_battery_current_filtered;
-	  
+
 		ui8_len += 24;
 		break;
 

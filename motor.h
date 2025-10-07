@@ -33,6 +33,8 @@ extern volatile uint8_t ui8_brake_state;
 extern volatile uint16_t ui16_adc_voltage;
 extern volatile uint16_t ui16_adc_torque;
 //extern volatile uint16_t ui16_adc_throttle; // mstrens : moved to ebike_app.c
+//lead angle
+extern volatile uint8_t lead_angle_LUT_256;
 
 extern volatile uint16_t ui16_adc_torque_filtered  ; 
 extern volatile uint16_t ui16_adc_torque_actual_rotation ;
@@ -96,6 +98,5 @@ void update_foc_pid();
 
 void update_foc_optimiser(void);
 
-//__RAM_FUNC static inline void calculate_id_part1();
+void run_adc_bias_calibration(void);
 
-//__RAM_FUNC static inline void calculate_id_part2();

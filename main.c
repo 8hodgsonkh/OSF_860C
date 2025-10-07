@@ -54,11 +54,11 @@ volatile uint32_t system_ticks2 = 0;
 
 
 // maximum duty cycle
-//extern uint8_t ui8_pwm_duty_cycle_max; 
+//extern uint8_t ui8_pwm_duty_cycle_max;
 
 // for debugging only at the beginning
 uint32_t count = 0;
-uint32_t speed = 0; 
+uint32_t speed = 0;
 uint32_t pas_1 = 0;
 uint32_t uart_rx = 0;
 uint32_t brake = 0;
@@ -69,11 +69,11 @@ extern volatile uint8_t ui8_received_package_flag ;
 extern volatile uint8_t ui8_tx_buffer[];
 
 // for debugging // probably to remove todo
-extern volatile uint32_t hall_print_pos ; 
+extern volatile uint32_t hall_print_pos ;
 extern volatile uint32_t hall_print_angle ;
 extern volatile uint32_t hall_print_pos2; // current hall pattern (after a sampling delay)
 extern volatile uint32_t hall_print_interval ; // interval between 2 correct hall transitions
-extern volatile uint32_t posif_SR0; 
+extern volatile uint32_t posif_SR0;
 extern volatile uint32_t posif_SR1;
 extern volatile uint32_t posif_print_current_pattern ;
 
@@ -345,7 +345,8 @@ int main(void)
     //XMC_VADC_GLOBAL_EnablePostCalibration(vadc_0_HW, 1U);
     //XMC_VADC_GLOBAL_StartupCalibration(vadc_0_HW);
    
-   
+   //force a stable adc bias calibration before the finaly delay
+    run_adc_bias_calibration();
    //XMC_WDT_Service();
     wait_time = 120000; // on more delay before starting the IRQ
     while (wait_time > 0){  // wait a little at power on to let VCC be stable and so get probably better ADC conversions

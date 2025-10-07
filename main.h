@@ -59,8 +59,8 @@
 #define USE_KATANA1234_LOGIC_FOR_TORQUE (1) // (1) = use katana with an average of n last value; big changes getting more priority
                                             // (0) = use a logic based on max of current torque, max current rotation, max previous rotation
                                             // (2) use katana logic with progressive resize depending on cadence
-#define APPLY_ENHANCED_POSITIONING (1) // 0 = do not apply; 1 = apply enhanced
-// enhanced means that we use only pattern 1 as reference +
+#define APPLY_ENHANCED_POSITIONING (0) // 0 = do not apply; 1 = apply enhanced
+// enhanced means that we use only p0ttern 1 as reference +
 // that speed for angle extrapolation on next electric rotation includes a correction based on actual error
 // that speed for next rotation is based on the speed on last 180° (and not last 360°)
 // those rules apply only when rotor rotation speed is fast enough otherwise we use "normal positioning"
@@ -126,7 +126,7 @@
 //#define MOTOR_SPEED_FIELD_WEAKENING_MIN			490 // 90 rpm
 //#define ERPS_SPEED_OF_MOTOR_REENABLING				320 // 60 rpm
 //For TSDZ8, I expect that it must be 2 * smaller for the same mecanical speed (4 poles instead of 8)
-#define MOTOR_SPEED_FIELD_WEAKENING_MIN				280 // earlier FW engagement
+#define MOTOR_SPEED_FIELD_WEAKENING_MIN				100 // earlier FW engagement
 
 // for TSDZ8 is must be 2 * smaller (320 for TSDZ2 becomes 160)
 #define ERPS_SPEED_OF_MOTOR_REENABLING						160 // 60 rpm
@@ -270,7 +270,7 @@ HALL_COUNTER_OFFSET_UP:    29 -> 44
 #define TORQUE_ASSIST_FACTOR_DENOMINATOR		60 // in tSDZ2, it is 120, reducing the value, increase the current for the same level
 
 // smooth start ramp
-#define SMOOTH_START_RAMP_DEFAULT					165 // 35% (255=0% long ramp)
+#define SMOOTH_START_RAMP_DEFAULT					100 // 35% (255=0% long ramp)
 #define SMOOTH_START_RAMP_MIN						30
 
 // torque step mode Not used in 860C
