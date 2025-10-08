@@ -46,17 +46,19 @@ volatile uint32_t system_ticks = 0;
 uint32_t loop_25ms_ticks = 0;  
 uint32_t start = 0 ; // mainly for debugging ; allow to print some variable every e.g. 5 sec
 */
-uint16_t last_clock_ticks = 0;
+uint16_t last_clock_ticks = 0;  // used to call a function every 25 ms (ebbike controller at 40Hz)
+uint16_t last_foc_pid_ticks = 0;    // used to call a function every 10 msec (update foc pid angle at 100hz)
+uint16_t last_foc_optimiser_ticks = 0 ; // used to call a function every 200 msec (update of optimizer at 5 hz)
 uint16_t last_system_ticks = 0;
 volatile uint32_t system_ticks2 = 0;
 
 
 // maximum duty cycle
-//extern uint8_t ui8_pwm_duty_cycle_max; 
+//extern uint8_t ui8_pwm_duty_cycle_max;
 
 // for debugging only at the beginning
 uint32_t count = 0;
-uint32_t speed = 0; 
+uint32_t speed = 0;
 uint32_t pas_1 = 0;
 uint32_t uart_rx = 0;
 uint32_t brake = 0;
@@ -67,11 +69,11 @@ extern volatile uint8_t ui8_received_package_flag ;
 extern volatile uint8_t ui8_tx_buffer[];
 
 // for debugging // probably to remove todo
-extern volatile uint32_t hall_print_pos ; 
+extern volatile uint32_t hall_print_pos ;
 extern volatile uint32_t hall_print_angle ;
 extern volatile uint32_t hall_print_pos2; // current hall pattern (after a sampling delay)
 extern volatile uint32_t hall_print_interval ; // interval between 2 correct hall transitions
-extern volatile uint32_t posif_SR0; 
+extern volatile uint32_t posif_SR0;
 extern volatile uint32_t posif_SR1;
 extern volatile uint32_t posif_print_current_pattern ;
 
@@ -204,7 +206,7 @@ int main(void)
     */
 
     #if(uCPROBE_GUI_OSCILLOSCOPE == MY_ENABLED)
-    ProbeScope_Init(19000);
+    ProbeScope_Init(19000); // freq of PWM
     #endif
 
     #if (DEBUG_ON_JLINK == 1)
@@ -343,7 +345,8 @@ int main(void)
     //XMC_VADC_GLOBAL_EnablePostCalibration(vadc_0_HW, 1U);
     //XMC_VADC_GLOBAL_StartupCalibration(vadc_0_HW);
    
-   
+   //force a stable adc bias calibration before the finaly delay
+
    //XMC_WDT_Service();
     wait_time = 120000; // on more delay before starting the IRQ
     while (wait_time > 0){  // wait a little at power on to let VCC be stable and so get probably better ADC conversions
@@ -390,13 +393,33 @@ int main(void)
             system_ticks2++; // add 1 every 0,25 sec (about)
             last_system_ticks = temp_ticks;
         }
-        uint16_t temp_interval = temp_ticks - last_clock_ticks;
+        
+        uint16_t temp_interval;
+        #if (DYNAMIC_LEAD_ANGLE == (1))
+        temp_interval = temp_ticks - last_foc_pid_ticks ; 
+        if ( temp_interval > 2500){ // 100hz : interval 10000 usec / 4usec = 2500 ticks
+            last_foc_pid_ticks = temp_ticks;
+            update_foc_pid();  // this calculate a new FOC angle based on a PI and on the Id current
+        }
+        #endif
+
+        temp_interval = temp_ticks - last_clock_ticks;
         //if ( (uint16_t) ((uint16_t) temp_ticks - (uint16_t) last_clock_ticks) > (uint16_t) 6250){ // 25000 usec / 4usec = 6250
         if ( temp_interval > 6250){ // 25000 usec / 4usec = 6250
             last_clock_ticks = temp_ticks;
             ebike_app_controller();  // this performs some checks and update some variable every 25 msec
         }
-   
+        
+        #if (DYNAMIC_LEAD_ANGLE == (1))
+        temp_interval = temp_ticks - last_foc_optimiser_ticks;
+        //if ( (uint16_t) ((uint16_t) temp_ticks - (uint16_t) last_clock_ticks) > (uint16_t) 6250){ // 25000 usec / 4usec = 6250
+        if ( temp_interval > 50000){ // 200000 usec / 4usec = 50000
+            last_foc_optimiser_ticks = temp_ticks;
+            update_foc_optimiser();  // this performs some checks and update some variable every 25 msec
+        }
+        #endif        
+
+        
         #if (uCPROBE_GUI_OSCILLOSCOPE == MY_ENABLED)
         //ProbeScope_Sampling(); // this should be moved e.g. in a interrupt that run faster
         #endif

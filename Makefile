@@ -82,7 +82,7 @@ VERBOSE=
 # ... then code in directories named COMPONENT_foo and COMPONENT_bar will be
 # added to the build
 #
-COMPONENTS=
+COMPONENTS=hal
 
 # Like COMPONENTS, but disable optional code that was enabled by default.
 DISABLE_COMPONENTS=
@@ -125,7 +125,7 @@ ASFLAGS=
 LDFLAGS=
 
 # Additional / custom libraries to link in to the application.
-LDLIBS=
+LDLIBS+= -lm
 
 # Path to the linker script to use (if empty, use the default linker script).
 LINKER_SCRIPT=

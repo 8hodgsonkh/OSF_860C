@@ -12,7 +12,7 @@
 //#include "config.h"
 #include "common.h"
                                     // !!!!!!!!!!!!!!
-#define FIRMWARE_VERSION "0.1.35"      //  !!! this version was derived from 0.1.13 for vlcd5 !!!!!!!!!!
+#define FIRMWARE_VERSION "0.1.36"      //  !!! this version was derived from 0.1.13 for vlcd5 !!!!!!!!!!
 //#define MAIN_CONFIGURATOR_VERSION 2   // for configurator (must be the same as in xls sheet)
 //#define SUB_CONFIGURATOR_VERSION 1    // is not used (just for reference)
 
@@ -56,16 +56,22 @@
 #define USE_SPIDER_LOGIC_FOR_TORQUE (0) // (1) = use Spider logic with a buffer of 20 value over one rotation.
                                         // (2) = mstrens variant using "expected" concept + smoothing
                                         // (3) = Spider logic, no reset of buffer when torque = 0, avg when less than 20.
-#define USE_KATANA1234_LOGIC_FOR_TORQUE (2) // (1) = use katana with an average of n last value; big changes getting more priority 
+#define USE_KATANA1234_LOGIC_FOR_TORQUE (1) // (1) = use katana with an average of n last value; big changes getting more priority
                                             // (0) = use a logic based on max of current torque, max current rotation, max previous rotation
                                             // (2) use katana logic with progressive resize depending on cadence
-//#define APPLY_ENHANCED_POSITIONING (0) // 0 = do not apply; 1 = apply enhanced
-// enhanced means that we use only pattern 1 as reference +
+#define APPLY_ENHANCED_POSITIONING (0) // 0 = do not apply; 1 = apply enhanced
+// enhanced means that we use only p0ttern 1 as reference +
 // that speed for angle extrapolation on next electric rotation includes a correction based on actual error
 // that speed for next rotation is based on the speed on last 180° (and not last 360°)
 // those rules apply only when rotor rotation speed is fast enough otherwise we use "normal positioning"
 // Normal positionning means that extrapolation is based on each pattern change and on speed on last 360°
 
+#define TYPE_OF_FILTER_FOR_CURRENT (0) // 0 = moving average over 64 values max (this is normally used)
+                                // 1 = moving average over a full rotation 
+
+#define DYNAMIC_LEAD_ANGLE      (0)   // (0) no dynamic
+                                      // (1) dynamic based on Id and a PID + optimiser 
+                                      // (2) dynamic based on Idc and a optimiser (= esc) 
 
 // *************** from here we have more general parameters 
 
@@ -88,7 +94,7 @@
 // wheel speed parameters
 #define OEM_WHEEL_SPEED_DIVISOR			384 // at 19 KHz
 
-#define PWM_CYCLES_SECOND			(64000000/(PWM_COUNTER_MAX*2)) // 55.5us (PWM period) 18 Khz // for TSDZ2, it was 16000000
+#define PWM_CYCLES_SECOND			(64000000/(PWM_COUNTER_MAX*2)) // 19000 = 55.5us (PWM period) 18 Khz // for TSDZ2, it was 16000000
 
 /*---------------------------------------------------------
  NOTE: regarding duty cycle (PWM) ramping
@@ -120,7 +126,7 @@
 //#define MOTOR_SPEED_FIELD_WEAKENING_MIN			490 // 90 rpm
 //#define ERPS_SPEED_OF_MOTOR_REENABLING				320 // 60 rpm
 //For TSDZ8, I expect that it must be 2 * smaller for the same mecanical speed (4 poles instead of 8)
-#define MOTOR_SPEED_FIELD_WEAKENING_MIN				200 // earlier FW engagement
+#define MOTOR_SPEED_FIELD_WEAKENING_MIN				280// earlier FW engagement
 
 // for TSDZ8 is must be 2 * smaller (320 for TSDZ2 becomes 160)
 #define ERPS_SPEED_OF_MOTOR_REENABLING						160 // 60 rpm
@@ -130,7 +136,7 @@
 // It seems TSDZ8 motor has an inductance of 180 uH and 4 poles
 // So, TSDZ2 uses a multiplier = 39, TSDZ8 should use 39 * 180 / 135 * 4 / 8 = 26  (foc is based on erps*L*I/V) 
 // I reduce it because erps should be 2X lower due to the reduced number of poles
-#define FOC_ANGLE_MULTIPLIER					26
+#define FOC_ANGLE_MULTIPLIER					29
 
 
 // cadence
@@ -264,7 +270,7 @@ HALL_COUNTER_OFFSET_UP:    29 -> 44
 #define TORQUE_ASSIST_FACTOR_DENOMINATOR		60 // in tSDZ2, it is 120, reducing the value, increase the current for the same level
 
 // smooth start ramp
-#define SMOOTH_START_RAMP_DEFAULT					165 // 35% (255=0% long ramp)
+#define SMOOTH_START_RAMP_DEFAULT					100 // 35% (255=0% long ramp)
 #define SMOOTH_START_RAMP_MIN						30
 
 // torque step mode Not used in 860C
@@ -274,7 +280,11 @@ HALL_COUNTER_OFFSET_UP:    29 -> 44
 
 // adc current (38 = 6A, 50 = 8A, 112 = 18A, 124 = 20A , 136 = 22A, 143 = 23A, 187 = 30A)
 #define ADC_10_BIT_BATTERY_EXTRACURRENT				50  //  8 amps
-#define ADC_10_BIT_BATTERY_CURRENT_MAX				188	// 30 amps // 1 = 0.16 Amp
+// 🔥 Hazza high-amp build
+#define ADC_10_BIT_BATTERY_CURRENT_MAX         188 // 30 A (0.16 A per ADC step)
+
+// 🐱‍👤 Safe / "pussy" build
+//#define ADC_10_BIT_BATTERY_CURRENT_MAX      150 // ~24 A limit (150 * 0.16 = 24 A)
 
 #define ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX			313	// 50 amps // 1 = 0.16 Amp
 /*---------------------------------------------------------

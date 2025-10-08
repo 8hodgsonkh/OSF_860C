@@ -382,8 +382,7 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 	// field weakening enable
 	if ((ui8_field_weakening_feature_enabled)
 		&& (ui16_motor_speed_erps > MOTOR_SPEED_FIELD_WEAKENING_MIN)
-		&& (ui16_adc_battery_current_filtered < ui16_controller_adc_battery_current_target)
-		&& (!ui8_adc_throttle_assist)) {
+		&& (ui16_adc_battery_current_filtered < ui16_controller_adc_battery_current_target)) {
 			ui8_field_weakening_erps_delta = ui16_motor_speed_erps - MOTOR_SPEED_FIELD_WEAKENING_MIN;
 			ui8_fw_hall_counter_offset_max = ui8_field_weakening_erps_delta >> 5;
 			if (ui8_fw_hall_counter_offset_max > FW_HALL_COUNTER_OFFSET_MAX) {
@@ -2579,7 +2578,7 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 			// throttle value with offset removed and mapped to 255
 			ui8_tx_buffer[10] = ui8_throttle_adc_in;
 		}
-		
+
 		// ADC torque_sensor
 		ui8_tx_buffer[11] = (uint8_t) (ui16_adc_torque & 0xff);
 		// ADC torque_sensor (higher bits), this bits are shared with wheel speed bits
@@ -2588,29 +2587,33 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 		// pedal torque delta no boost
 		ui8_tx_buffer[12] = (uint8_t) (ui16_adc_pedal_torque_delta_no_boost & 0xff);
 		ui8_tx_buffer[13] = (uint8_t) (ui16_adc_pedal_torque_delta_no_boost >> 8);
-		
+
 		// PAS cadence
 		ui8_tx_buffer[14] = ui8_pedal_cadence_RPM;
-		
+
 		// PWM duty_cycle
 		// convert duty-cycle to 0 - 100 %
 		ui16_temp = (uint16_t) ui8_g_duty_cycle;
 		ui16_temp = (ui16_temp * 100) / PWM_DUTY_CYCLE_MAX;
 		ui8_tx_buffer[15] = (uint8_t) ui16_temp;
-		
-		// motor speed in ERPS 
+
+		// motor speed in ERPS
 		ui8_tx_buffer[16] = (uint8_t) (ui16_motor_speed_erps & 0xff);
 		ui8_tx_buffer[17] = (uint8_t) (ui16_motor_speed_erps >> 8);
-		
-		// FOC angle
+
+		// Show dynamic lead angle as 0..45 on the display.
+		//  - ui8_g_foc_angle: 0..255 circular (0..360°), interpret as signed -180..+180°
+		//  - clamp to [-15,+30] then shift to 0..45.
+
 		ui8_tx_buffer[18] = ui8_g_foc_angle;
+
 
 		// system state
 		ui8_tx_buffer[19] = ui8_m_system_state;
 
 		// send motor_current_x5
 		ui8_tx_buffer[20] = ui8_motor_current_filtered_x5;
-		
+
 		// wheel_speed_sensor_tick_counter
 		ui8_tx_buffer[21] = (uint8_t) (ui32_wheel_speed_sensor_ticks_total & 0xff);
 		ui8_tx_buffer[22] = (uint8_t) ((ui32_wheel_speed_sensor_ticks_total >> 8) & 0xff);
@@ -2619,11 +2622,8 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 		// pedal torque delta boost
 		ui8_tx_buffer[24] = (uint8_t) (ui16_adc_pedal_torque_delta & 0xff);
 		ui8_tx_buffer[25] = (uint8_t) (ui16_adc_pedal_torque_delta >> 8);
-
-		// first 8 bits of adc_motor_current
-		//ui8_tx_buffer[26] = (uint8_t) (ui16_adc_battery_current & 0xff);
 		ui8_tx_buffer[26] = ui16_adc_battery_current_filtered;
-	  
+
 		ui8_len += 24;
 		break;
 
