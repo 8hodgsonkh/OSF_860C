@@ -346,7 +346,7 @@ int main(void)
     //XMC_VADC_GLOBAL_StartupCalibration(vadc_0_HW);
    
    //force a stable adc bias calibration before the finaly delay
-    run_adc_bias_calibration();
+
    //XMC_WDT_Service();
     wait_time = 120000; // on more delay before starting the IRQ
     while (wait_time > 0){  // wait a little at power on to let VCC be stable and so get probably better ADC conversions

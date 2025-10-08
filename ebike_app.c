@@ -382,8 +382,7 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 	// field weakening enable
 	if ((ui8_field_weakening_feature_enabled)
 		&& (ui16_motor_speed_erps > MOTOR_SPEED_FIELD_WEAKENING_MIN)
-		&& (ui16_adc_battery_current_filtered < ui16_controller_adc_battery_current_target)
-		&& (!ui8_adc_throttle_assist)) {
+		&& (ui16_adc_battery_current_filtered < ui16_controller_adc_battery_current_target)) {
 			ui8_field_weakening_erps_delta = ui16_motor_speed_erps - MOTOR_SPEED_FIELD_WEAKENING_MIN;
 			ui8_fw_hall_counter_offset_max = ui8_field_weakening_erps_delta >> 5;
 			if (ui8_fw_hall_counter_offset_max > FW_HALL_COUNTER_OFFSET_MAX) {
@@ -2602,8 +2601,12 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 		ui8_tx_buffer[16] = (uint8_t) (ui16_motor_speed_erps & 0xff);
 		ui8_tx_buffer[17] = (uint8_t) (ui16_motor_speed_erps >> 8);
 
-		// FOC angle
-		ui8_tx_buffer[18] = (ui8_g_foc_angle * 45 + 127) / 255; // map 0-255 → 0-45 deg
+		// Show dynamic lead angle as 0..45 on the display.
+		//  - ui8_g_foc_angle: 0..255 circular (0..360°), interpret as signed -180..+180°
+		//  - clamp to [-15,+30] then shift to 0..45.
+
+		ui8_tx_buffer[18] = ui8_g_foc_angle;
+
 
 		// system state
 		ui8_tx_buffer[19] = ui8_m_system_state;

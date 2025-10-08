@@ -69,7 +69,7 @@
 #define TYPE_OF_FILTER_FOR_CURRENT (0) // 0 = moving average over 64 values max (this is normally used)
                                 // 1 = moving average over a full rotation 
 
-#define DYNAMIC_LEAD_ANGLE      (1)   // (0) no dynamic
+#define DYNAMIC_LEAD_ANGLE      (0)   // (0) no dynamic
                                       // (1) dynamic based on Id and a PID + optimiser 
                                       // (2) dynamic based on Idc and a optimiser (= esc) 
 
@@ -126,7 +126,7 @@
 //#define MOTOR_SPEED_FIELD_WEAKENING_MIN			490 // 90 rpm
 //#define ERPS_SPEED_OF_MOTOR_REENABLING				320 // 60 rpm
 //For TSDZ8, I expect that it must be 2 * smaller for the same mecanical speed (4 poles instead of 8)
-#define MOTOR_SPEED_FIELD_WEAKENING_MIN				100 // earlier FW engagement
+#define MOTOR_SPEED_FIELD_WEAKENING_MIN				280// earlier FW engagement
 
 // for TSDZ8 is must be 2 * smaller (320 for TSDZ2 becomes 160)
 #define ERPS_SPEED_OF_MOTOR_REENABLING						160 // 60 rpm
