@@ -1,4 +1,3 @@
-
 #include "lead_angle_ESC_on_Idc.h"
 #include <string.h> // memset
 #include <stdlib.h> // abs
