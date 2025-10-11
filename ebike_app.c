@@ -83,8 +83,8 @@ uint8_t ui8_duty_cycle_ramp_up_inverse_step_default = PWM_DUTY_CYCLE_RAMP_UP_INV
 uint8_t ui8_duty_cycle_ramp_down_inverse_step = PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_DEFAULT;
 uint8_t ui8_duty_cycle_ramp_down_inverse_step_default = PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_DEFAULT;
 uint16_t ui16_battery_voltage_filtered_x1000 = 0;
-static uint8_t ui8_battery_current_filtered_x5 = 0;
-static uint8_t ui8_motor_current_filtered_x5 = 0;
+static uint16_t ui16_battery_current_filtered_x5 = 0;
+static uint16_t ui16_motor_current_filtered_x5 = 0;
 static uint16_t ui16_adc_battery_voltage_filtered = 0;
 uint16_t ui16_adc_battery_current_max = ADC_10_BIT_BATTERY_CURRENT_MAX;
 uint16_t ui16_adc_battery_current_target = 0;
@@ -134,7 +134,7 @@ static uint8_t ui8_hybrid_torque_parameter = 0;
 static uint8_t ui8_eMTB_based_on_power = 1;
 
 // wheel speed sensor
-static uint16_t ui16_wheel_speed_x10 = 0;
+volatile uint16_t ui16_wheel_speed_x10 = 0;
 static uint8_t ui8_speed_limit_high_exceeded = 0;
 uint8_t ui8_wheel_speed_simulate = 0;  //added by mstrens to simulate a fixed speed whithout having a speed sensor like for non 860C version
 
@@ -303,10 +303,10 @@ void ebike_app_controller(void) // is called every 25ms by main()
 	
     
     // Calculate filtered Battery Current (Ampx5)
-   ui8_battery_current_filtered_x5 = (uint8_t)(((uint32_t) ui16_adc_battery_current_filtered * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) / 20);
+  ui16_battery_current_filtered_x5 = (uint16_t)(((uint32_t) ui16_adc_battery_current_filtered * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) / 20);
 	
 	// Calculate filtered Motor Current (Ampx5)
-    ui8_motor_current_filtered_x5 = (uint8_t)(((uint16_t) ui16_adc_motor_phase_current * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) / 20);
+    ui16_motor_current_filtered_x5 = (uint16_t)(((uint16_t) ui16_adc_motor_phase_current * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) / 20);
 	
 	// get pedal torque ; calculate ui16_pedal_torque_x100 and ui16_human_power_x10 (human power)
 	get_pedal_torque();
@@ -2127,8 +2127,8 @@ if (ui8_test_mode_flag == NORMAL_RUNNING_MODE) {  // check only in normal runnin
     static uint8_t ui8_motor_blocked_counter;
     
 	// if battery current is over the current threshold and the motor ERPS is below threshold start setting motor blocked error code
-	if ((ui8_battery_current_filtered_x5 > MOTOR_BLOCKED_BATTERY_CURRENT_THRESHOLD_X5)
-	  && (ui16_motor_speed_erps < MOTOR_BLOCKED_ERPS_THRESHOLD)) {
+	if ((ui16_battery_current_filtered_x5 > MOTOR_BLOCKED_BATTERY_CURRENT_THRESHOLD_X5)
+		&& (ui16_motor_speed_erps < MOTOR_BLOCKED_ERPS_THRESHOLD)) {
 		// increment motor blocked counter with 100 milliseconds
 		++ui8_motor_blocked_counter;
 
@@ -2491,29 +2491,51 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 		ui8_cruise_legal = (ui8_temp & 128) >> 7;
 		
 
-		// Read the power limit from the display
+		// --- Read display "power limit" (units of 25 W) ---
 		ui8_target_battery_max_power_div25 = ui8_rx_buffer[6];
 
-		// If the display asks for a low power limit, we'll assume it's Street Mode.
-		if (ui8_target_battery_max_power_div25 < 15) {
-			// STREET MODE: Hard limit to 5 Amps.
-			const uint8_t kStreetAmpsA = 5U;
-			ui16_adc_battery_current_max = (uint16_t)(((uint16_t)kStreetAmpsA * 100U) / (uint16_t)BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100);
-		} else {
-			// OFF-ROAD MODE: Unleash the beast. Hard limit to 30 Amps.
-			const uint8_t kOffroadAmpsA = 30U;
-			ui16_adc_battery_current_max = (uint16_t)(((uint16_t)kOffroadAmpsA * 100U) / (uint16_t)BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100);
+		// --- Compute an ADC-steps cap from power for STREET, else use global max for OFF-ROAD ---
+		{
+			// Decide street/off-road. If you have a real flag, prefer that.
+			// bool is_street = (m_configuration_variables.ui8_street_mode_enabled != 0);
+			bool is_street = (ui8_target_battery_max_power_div25 > 0) && (ui8_target_battery_max_power_div25 < 15);
+
+			if (is_street) {
+				// power_mW = (div25 * 25 W) * 1000
+				uint32_t power_mW = (uint32_t)ui8_target_battery_max_power_div25 * 25u * 1000u;
+
+				// current_x100 = (power_mW / Vbat_mV) * 100  = A*100
+				// ui16_battery_voltage_filtered_x1000 is in mV (per your code paths)
+				uint32_t current_x100 = (ui16_battery_voltage_filtered_x1000 > 0)
+				? (power_mW / ui16_battery_voltage_filtered_x1000) * 100u
+				: 0u;
+
+				// steps = (A*100) / (A/step *100) = ADC steps
+				uint32_t steps = (BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100 > 0)
+				? (current_x100 / (uint32_t)BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100)
+				: 0u;
+
+				// clamp to system max
+				if (steps > ADC_10_BIT_BATTERY_CURRENT_MAX) steps = ADC_10_BIT_BATTERY_CURRENT_MAX;
+
+				ui16_adc_battery_current_max = (uint16_t)steps;
+			} else {
+				// OFF-ROAD: full system limit
+				ui16_adc_battery_current_max = ADC_10_BIT_BATTERY_CURRENT_MAX;
+			}
 		}
 
-		// Now, apply the limit we just calculated
-		ui16_temp = (uint16_t)(ui16_adc_battery_current_max * ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX);
-		ui16_adc_motor_phase_current_max = (uint16_t)(ui16_temp / ADC_10_BIT_BATTERY_CURRENT_MAX);
-		if (ui16_adc_motor_phase_current_max > ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX) {
-			ui16_adc_motor_phase_current_max = ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX;
+		// --- Derive phase-current max and overcurrent from that single source of truth ---
+		{
+			uint32_t t = (uint32_t)ui16_adc_battery_current_max * (uint32_t)ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX;
+			ui16_adc_motor_phase_current_max = (uint16_t)(t / (uint32_t)ADC_10_BIT_BATTERY_CURRENT_MAX);
+			if (ui16_adc_motor_phase_current_max > ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX)
+				ui16_adc_motor_phase_current_max = ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX;
+
+			uint16_t oc = ui16_adc_battery_current_max + ADC_10_BIT_BATTERY_EXTRACURRENT;
+			ui8_adc_battery_overcurrent = (oc > 255u) ? 255u : (uint8_t)oc;
 		}
-		uint16_t oc = ui16_adc_battery_current_max + ADC_10_BIT_BATTERY_EXTRACURRENT;
-		ui8_adc_battery_overcurrent = (oc > 255U) ? 255U : (uint8_t)oc;
-		
+
 		// walk assist parameter
 		ui8_walk_assist_parameter = ui8_rx_buffer[7];
 		
@@ -2552,7 +2574,7 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 		ui8_tx_buffer[4] = ((uint8_t) (ui16_adc_battery_voltage_filtered >> 4)) & 0x30;
 
 		// send battery_current_x5
-		ui8_tx_buffer[5] = ui8_battery_current_filtered_x5;
+		ui8_tx_buffer[5]  = (uint8_t)(ui16_battery_current_filtered_x5);
 
 		// wheel speed
 		ui8_tx_buffer[6] = (uint8_t) (ui16_wheel_speed_x10 & 0xff);
@@ -2612,7 +2634,7 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 		ui8_tx_buffer[19] = ui8_m_system_state;
 
 		// send motor_current_x5
-		ui8_tx_buffer[20] = ui8_motor_current_filtered_x5;
+		ui8_tx_buffer[20] = (uint8_t)(ui16_motor_current_filtered_x5);
 
 		// wheel_speed_sensor_tick_counter
 		ui8_tx_buffer[21] = (uint8_t) (ui32_wheel_speed_sensor_ticks_total & 0xff);

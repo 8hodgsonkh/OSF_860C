@@ -75,7 +75,7 @@ volatile uint16_t ui16_hall_counter_total = 0xffff; // number of tim3 ticks betw
 static uint16_t ui16_hall_counter_total_previous = 0;  // used to check if erps is stable
 uint8_t ui8_interpolation_angle = 0; // interpolation angle
 extern uint16_t ui16_motor_speed_erps;
-extern volatile uint16_t ui16_wheel_speed_x10;
+
 
 // power variables
 volatile uint8_t ui8_controller_duty_cycle_ramp_up_inverse_step = PWM_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_DEFAULT; // 194
@@ -880,92 +880,45 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
         // Furthermore, when ebike_app_controller starts PWM, g_duty_cycle is first set to PWM_DUTY_CYCLE_STARTUP.
 
         {
-            /* ---------------- Soft-launch until load is detected ---------------- */
-            /* C89-safe statics (persist across IRQ calls) */
-            static uint8_t  soft_launch_active  = 0u;
-            static uint16_t soft_launch_counter = 0u;
+            /* Tunables for snappy-but-safe ramping */
+            const uint8_t FAST_GAP_UP    = 8u;  /* if target - actual >= 8, use fast ramp */
+            const uint8_t STEP_UP_FAST   = 3u;  /* +3 when far from target */
+            const uint8_t STEP_UP_SLOW   = 1u;  /* +1 when close to target */
+            const uint8_t STEP_DOWN_FAST = 2u;  /* -2 when far over / braking / over-phase */
+            const uint8_t STEP_DOWN_SLOW = 1u;  /* -1 gentle trim */
 
-            /* Tunables */
-            const uint16_t SOFT_LAUNCH_MAX_TICKS = 300u;     /* timeout failsafe */
-            const uint8_t  SOFT_START_DUTY       = (uint8_t)(PWM_DUTY_CYCLE_STARTUP / 2u);  /* gentle spin */
-            const uint8_t  SOFT_CEILING_MAX      = 80u;      /* max duty during preload (0..255) */
-            const uint8_t  SOFT_CEILING_STEP_N   = 4u;       /* +1 to ceiling every N ticks */
-
-            /* Convert ≈3 A to 10-bit ADC steps (current filter is in ADC steps) */
-            uint16_t I_THRESH_ADC10_u16 =
-            (uint16_t)(300u / (uint16_t)BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100);
-            if (I_THRESH_ADC10_u16 == 0u)   I_THRESH_ADC10_u16 = 1u;
-            if (I_THRESH_ADC10_u16 > 255u)  I_THRESH_ADC10_u16 = 255u;
-            const uint16_t I_THRESH_ADC10 = I_THRESH_ADC10_u16;
-
-            /* We clamp the *target* during soft-launch, not the actual duty. */
-            uint8_t target_for_ramp = ui8_controller_duty_cycle_target;
-
-            /* Enter soft-launch when starting from zero, target > 0, and no load yet */
-            if (soft_launch_active == 0u) {
-                if ((ui8_g_duty_cycle == 0u) &&
-                    (ui8_controller_duty_cycle_target > 0u) &&
-                    (ui16_adc_battery_current_filtered < I_THRESH_ADC10))
-                {
-                    soft_launch_active  = 1u;
-                    soft_launch_counter = 0u;
-                }
-            } else {
-                /* Raise a soft duty ceiling slowly while waiting for load to appear */
-                uint8_t soft_ceiling = SOFT_START_DUTY;
-                soft_ceiling = (uint8_t)(soft_ceiling + (uint8_t)(soft_launch_counter / SOFT_CEILING_STEP_N));
-                if (soft_ceiling > SOFT_CEILING_MAX) soft_ceiling = SOFT_CEILING_MAX;
-
-                if (target_for_ramp > soft_ceiling)
-                    target_for_ramp = soft_ceiling;
-
-                /* keep time and exit when load shows up or we time out */
-                soft_launch_counter++;
-                if ((ui16_adc_battery_current_filtered >= I_THRESH_ADC10) ||
-                    (soft_launch_counter >= SOFT_LAUNCH_MAX_TICKS))
-                {
-                    soft_launch_active = 0u;
-                }
-            }
-
-            /* ---------------- Snappy but safe duty ramp (uses target_for_ramp) ---------------- */
-            const uint8_t FAST_GAP_UP    = 8u;   /* if target-actual >= 8, fast ramp */
-            const uint8_t STEP_UP_FAST   = 3u;   /* +3 when far from target */
-            const uint8_t STEP_UP_SLOW   = 1u;   /* +1 when close */
-            const uint8_t STEP_DOWN_FAST = 2u;   /* -2 when far over / braking / over-phase */
-            const uint8_t STEP_DOWN_SLOW = 1u;   /* -1 gentle */
-
-            /* Direction flags (no stdbool) */
+            /* Evaluate ramp directions (no stdbool.h) */
             uint8_t must_ramp_down = 0u;
             uint8_t can_ramp_up    = 0u;
 
-            if ((target_for_ramp < ui8_g_duty_cycle) ||                                          /* target < actual */
-                (ui16_controller_adc_battery_current_target < ui16_adc_battery_current_filtered) || /* requested Ibat < measured */
-                (ui16_adc_motor_phase_current > ui16_adc_motor_phase_current_max) ||             /* phase over limit */
-                /* (ui16_hall_counter_total < (HALL_COUNTER_FREQ / MOTOR_OVER_SPEED_ERPS)) || */ /* overspeed (disabled) */
-                (ui16_adc_voltage < ui16_adc_voltage_cut_off) ||                                 /* undervoltage */
+            if ((ui8_controller_duty_cycle_target < ui8_g_duty_cycle) ||                                   /* target < actual */
+                (ui16_controller_adc_battery_current_target < ui16_adc_battery_current_filtered) ||        /* requested Ibat < measured */
+                (ui16_adc_motor_phase_current > ui16_adc_motor_phase_current_max) ||                       /* phase over limit */
+                /* (ui16_hall_counter_total < (HALL_COUNTER_FREQ / MOTOR_OVER_SPEED_ERPS)) || */           /* overspeed (disabled) */
+                (ui16_adc_voltage < ui16_adc_voltage_cut_off) ||                                           /* undervoltage */
                 (ui8_brake_state != 0))
             {
                 must_ramp_down = 1u;
             }
-            else if ((target_for_ramp > ui8_g_duty_cycle) &&
-                (ui16_controller_adc_battery_current_target > ui16_adc_battery_current_filtered))
+            else if ((ui8_controller_duty_cycle_target > ui8_g_duty_cycle) &&
+                (ui16_controller_adc_battery_current_target > ui16_adc_battery_current_filtered))     /* need more current */
             {
                 can_ramp_up = 1u;
             }
 
             if (must_ramp_down) {
+                /* reset up-filter counter */
                 ui8_counter_duty_cycle_ramp_up = 0;
 
                 if (++ui8_counter_duty_cycle_ramp_down > ui8_controller_duty_cycle_ramp_down_inverse_step) {
                     ui8_counter_duty_cycle_ramp_down = 0;
 
-                    /* FW first, then duty—keeps original behavior */
+                    /* drop FW first (as before), then duty */
                     if (ui8_fw_hall_counter_offset > 0) {
                         ui8_fw_hall_counter_offset--;
                     } else if (ui8_g_duty_cycle > 0) {
                         uint8_t step = STEP_DOWN_SLOW;
-                        if ((ui8_g_duty_cycle > (uint8_t)(target_for_ramp + FAST_GAP_UP)) ||
+                        if ((ui8_g_duty_cycle > (uint8_t)(ui8_controller_duty_cycle_target + FAST_GAP_UP)) ||
                             (ui8_brake_state != 0) ||
                             (ui16_adc_motor_phase_current > ui16_adc_motor_phase_current_max))
                         {
@@ -976,26 +929,29 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
                 }
             }
             else if (can_ramp_up) {
+                /* reset down-filter counter */
                 ui8_counter_duty_cycle_ramp_down = 0;
 
                 if (++ui8_counter_duty_cycle_ramp_up > ui8_controller_duty_cycle_ramp_up_inverse_step) {
                     ui8_counter_duty_cycle_ramp_up = 0;
 
+                    /* ensure launch isn't sticky */
                     if (ui8_g_duty_cycle < PWM_DUTY_CYCLE_STARTUP) {
-                        ui8_g_duty_cycle = PWM_DUTY_CYCLE_STARTUP;  /* avoid sticky crawl */
+                        ui8_g_duty_cycle = PWM_DUTY_CYCLE_STARTUP;
                     } else if (ui8_g_duty_cycle < PWM_DUTY_CYCLE_MAX) {
-                        uint8_t gap  = (uint8_t)(target_for_ramp - ui8_g_duty_cycle);
+                        uint8_t gap  = (uint8_t)(ui8_controller_duty_cycle_target - ui8_g_duty_cycle);
                         uint8_t step = (gap >= FAST_GAP_UP) ? STEP_UP_FAST : STEP_UP_SLOW;
 
+                        /* clamp to target and absolute max */
                         uint16_t next = (uint16_t)ui8_g_duty_cycle + (uint16_t)step;
-                        if (next > target_for_ramp)     next = target_for_ramp;
-                        if (next > PWM_DUTY_CYCLE_MAX)  next = PWM_DUTY_CYCLE_MAX;
+                        if (next > ui8_controller_duty_cycle_target) next = ui8_controller_duty_cycle_target;
+                        if (next > PWM_DUTY_CYCLE_MAX)               next = PWM_DUTY_CYCLE_MAX;
                         ui8_g_duty_cycle = (uint8_t)next;
                     }
                 }
             }
             else if ((ui8_field_weakening_enabled != 0u) && (ui8_g_duty_cycle == PWM_DUTY_CYCLE_MAX)) {
-                /* No change needed on duty; allow FW to climb smoothly */
+                /* no ramp up/down needed; allow FW to climb smoothly */
                 ui8_counter_duty_cycle_ramp_down = 0;
                 if (++ui8_counter_duty_cycle_ramp_up > ui8_controller_duty_cycle_ramp_up_inverse_step) {
                     ui8_counter_duty_cycle_ramp_up = 0;
@@ -1005,12 +961,11 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
                 }
             }
             else {
-                /* Target met; idle counters */
+                /* target met; counters idle */
                 ui8_counter_duty_cycle_ramp_up   = 0;
                 ui8_counter_duty_cycle_ramp_down = 0;
             }
         }
-
     // to debug
     //uint16_t temp1e  =  XMC_CCU4_SLICE_GetTimerValue(HALL_SPEED_TIMER_HW);
     //temp1e = temp1e - start_ticks;

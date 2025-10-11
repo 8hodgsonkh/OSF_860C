@@ -59,7 +59,7 @@
 #define USE_KATANA1234_LOGIC_FOR_TORQUE (1) // (1) = use katana with an average of n last value; big changes getting more priority
                                             // (0) = use a logic based on max of current torque, max current rotation, max previous rotation
                                             // (2) use katana logic with progressive resize depending on cadence
-#define APPLY_ENHANCED_POSITIONING (0) // 0 = do not apply; 1 = apply enhanced
+#define APPLY_ENHANCED_POSITIONING (1) // 0 = do not apply; 1 = apply enhanced
 // enhanced means that we use only p0ttern 1 as reference +
 // that speed for angle extrapolation on next electric rotation includes a correction based on actual error
 // that speed for next rotation is based on the speed on last 180° (and not last 360°)
@@ -106,7 +106,7 @@
  low values for acceleration.
  ---------------------------------------------------------*/
 // ramp up/down PWM cycles count
-#define PWM_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_DEFAULT			(uint8_t)(PWM_CYCLES_SECOND/98)  // 194
+#define PWM_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_DEFAULT			(uint8_t)(PWM_CYCLES_SECOND/80)  // 194
 #define PWM_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_MIN				(uint8_t)(PWM_CYCLES_SECOND/781) // 24
 #define PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_DEFAULT		(uint8_t)(PWM_CYCLES_SECOND/260) // 73
 #define PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_MIN			(uint8_t)(PWM_CYCLES_SECOND/1953) //9
@@ -279,14 +279,14 @@ HALL_COUNTER_OFFSET_UP:    29 -> 44
 
 
 // adc current (38 = 6A, 50 = 8A, 112 = 18A, 124 = 20A , 136 = 22A, 143 = 23A, 187 = 30A)
-#define ADC_10_BIT_BATTERY_EXTRACURRENT				50  //  8 amps
+#define ADC_10_BIT_BATTERY_EXTRACURRENT      53   // 8 / 0.15 = 53.3
 // 🔥 Hazza high-amp build
-#define ADC_10_BIT_BATTERY_CURRENT_MAX         188 // 30 A (0.16 A per ADC step)
+#define ADC_10_BIT_BATTERY_CURRENT_MAX       200  // 30 / 0.15 = 200
 
 // 🐱‍👤 Safe / "pussy" build
 //#define ADC_10_BIT_BATTERY_CURRENT_MAX      150 // ~24 A limit (150 * 0.16 = 24 A)
 
-#define ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX			313	// 50 amps // 1 = 0.16 Amp
+#define ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX   333  // 50 / 0.15 = 333.3
 /*---------------------------------------------------------
  NOTE: regarding ADC battery current max
 
@@ -357,7 +357,7 @@ HALL_COUNTER_OFFSET_UP:    29 -> 44
  ---------------------------------------------------------*/
 
 // ADC battery current measurement
-#define BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100		16  // 0.16A x 10 bit ADC step
+#define BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100 15  // 0.15 A/step
 
 // for oem display
 
