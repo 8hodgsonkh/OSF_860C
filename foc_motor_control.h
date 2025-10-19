@@ -1,0 +1,76 @@
+#ifndef FOC_MOTOR_CONTROL_H
+#define FOC_MOTOR_CONTROL_H
+
+#include <stdint.h>
+#include <string.h> // For memset
+
+// -----------------------------------------------------------------------------
+// Fixed-Point Math (Q15 format: 1 sign bit, 15 fractional bits)
+// -----------------------------------------------------------------------------
+typedef int16_t  q15_t;
+typedef uint16_t elec_angle_t;  // 0..65535 ≡ 0..2π
+
+#define Q15_ONE         32767
+#define Q15_HALF        16384
+#define FLOAT_TO_Q15(f) ((q15_t)((f) * 32767.0f))
+#define Q15_TO_FLOAT(q) ((float)(q) / 32767.0f)
+#define Q15_MUL(a,b)    ((q15_t)(((int32_t)(a) * (b)) >> 15))
+
+// -----------------------------------------------------------------------------
+// Constants
+// -----------------------------------------------------------------------------
+#define PI               3.14159265359f
+#define TWO_PI           6.28318530718f
+#define SQRT3            1.73205080757f
+#define SQRT3_DIV_2      0.86602540378f
+#define ONE_DIV_SQRT3    0.57735026919f
+
+// -----------------------------------------------------------------------------
+// Hardware-specific defines
+// -----------------------------------------------------------------------------
+#define PWM_PERIOD_TICKS 2400   // From motor.c configuration
+#define MAX_ADC_VALUE    4095   // 12-bit ADC centered at 2048
+
+// -----------------------------------------------------------------------------
+// PID Controller Structure
+// -----------------------------------------------------------------------------
+typedef struct {
+    q15_t Kp;           // Proportional gain
+    q15_t Ki;           // Integral gain
+    q15_t Kc;           // Anti-windup gain (back-calculation)
+    q15_t integral_term;
+    q15_t previous_error;
+    q15_t output_max;
+    q15_t output_min;
+} PID_Controller_t;
+
+// -----------------------------------------------------------------------------
+// Main FOC Controller Structure
+// -----------------------------------------------------------------------------
+typedef struct {
+    // Targets
+    q15_t Iq_target_q15;   // Torque-producing current target
+    q15_t Id_target_q15;   // Flux-producing current target
+
+    // State variables
+    elec_angle_t electrical_angle; // 0..65535 ≡ 0..2π
+    q15_t I_u, I_v, I_w;
+    q15_t I_alpha, I_beta;
+    q15_t Id, Iq;
+    q15_t Vd, Vq;
+    q15_t V_alpha, V_beta;
+    uint16_t pwm_u, pwm_v, pwm_w;
+
+    // Controllers
+    PID_Controller_t pid_d;
+    PID_Controller_t pid_q;
+
+} FOC_Controller_t;
+
+// -----------------------------------------------------------------------------
+// Public API
+// -----------------------------------------------------------------------------
+void foc_init(FOC_Controller_t* foc_controller);
+void foc_run_control_loop(FOC_Controller_t* foc_controller);
+
+#endif // FOC_MOTOR_CONTROL_H

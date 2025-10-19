@@ -1313,11 +1313,33 @@ static void apply_throttle(void)
 								(uint8_t)0,
 									  (uint8_t)255);
 
-		// --- One-knob mid-point shaping (0..50 -> mid at 30..70%) ---
+		// --- Static ease-in on first ~30% (tames bumps, keeps full range) ---Hazza
 		{
-			uint8_t k = ui8_adc_pedal_torque_angle_adj; // 0..50 from rx[52]
-			uint16_t mid_pct = 30U + ((uint16_t)k * 40U) / 50U;        // 30..70
-			uint16_t mid255  = (mid_pct * 255U + 50U) / 100U;          // 77..178
+			uint16_t x = ui8_throttle_adc_in;      // 0..255
+			const uint16_t T = 77U;                // ~30% of 255
+
+			// Optional: suppress micro-jitter near idle
+			if (x < 3U) x = 0U;
+
+			uint16_t y;
+			if (x <= T) {
+				// Quadratic ease-in mapped 0..T → 0..T
+				y = (uint16_t)((x * x + (T >> 1)) / T);
+			} else {
+				y = x; // above 30%: untouched
+			}
+
+			if (y > 255U) y = 255U;
+			ui8_throttle_adc_in = (uint8_t)y;
+		}
+
+		// --- One-knob mid-point shaping (0..40 → mid at 30..70%) ---Hazza
+		{
+			uint8_t k = ui8_adc_pedal_torque_angle_adj; // 0..40 from display
+			if (k > 40U) k = 40U;
+
+			uint16_t mid_pct = 30U + ((uint16_t)k * 40U) / 40U;  // 30..70
+			uint16_t mid255  = (mid_pct * 255U + 50U) / 100U;    // 77..178
 
 			uint16_t x = ui8_throttle_adc_in; // 0..255
 			uint16_t y;
@@ -1330,7 +1352,8 @@ static void apply_throttle(void)
 			if (y > 255U) y = 255U;
 			ui8_throttle_adc_in = (uint8_t)y;
 		}
-		// -------------------------------------------------------------
+
+
 
 		// select throttle assist source
 		if (ui8_throttle_virtual) {

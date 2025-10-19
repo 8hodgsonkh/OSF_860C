@@ -1,0 +1,339 @@
+heres a short list of the main tweaks ive done to make this lil beast into a power house. i always wondered. why doesnt a low gear actually feel torquey at all? after increasing amps and doing a lot of tweaks, i stil felt like i was missing that final "punch" turns out, duty cycle was the perfect solution.
+suprisingly motor temp hasnt really increased whatsoever
+faster time to a efficient rpm  = less time building heat ¯\_(ツ)_/¯
+motor also handles increase amps like a champ. obviously dont ride in max gear, uphill, throttle only, because it will pull, and it will get hot then
+these are fun performance tweaks but used sensibly shouldnt increase wear too much as theres some safe guards here. but it all depends how you treat your bike!
+Duty cycle - instant torque and hard start with soft start ntil load detected to help stop that instant snap of your chain and casette - before this it was too ruthless and adding a soft start didnt take away any fun at all
+times are tweakable if u want to change it a bit
+replace whole duty cycle block in motor.c with
+ {
+            /* ---------------- Soft-launch until load is detected ---------------- */
+            /* C89-safe statics (persist across IRQ calls) */
+            static uint8_t  soft_launch_active  = 0u;
+            static uint16_t soft_launch_counter = 0u;
+
+            /* Tunables */
+            const uint16_t SOFT_LAUNCH_MAX_TICKS = 300u;     /* timeout failsafe */
+            const uint8_t  SOFT_START_DUTY       = (uint8_t)(PWM_DUTY_CYCLE_STARTUP / 2u);  /* gentle spin */
+            const uint8_t  SOFT_CEILING_MAX      = 80u;      /* max duty during preload (0..255) */
+            const uint8_t  SOFT_CEILING_STEP_N   = 4u;       /* +1 to ceiling every N ticks */
+
+            /* Convert ≈3 A to 10-bit ADC steps (current filter is in ADC steps) */
+            uint16_t I_THRESH_ADC10_u16 =
+            (uint16_t)(300u / (uint16_t)BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100);
+            if (I_THRESH_ADC10_u16 == 0u)   I_THRESH_ADC10_u16 = 1u;
+            if (I_THRESH_ADC10_u16 > 255u)  I_THRESH_ADC10_u16 = 255u;
+            const uint16_t I_THRESH_ADC10 = I_THRESH_ADC10_u16;
+
+            /* We clamp the *target* during soft-launch, not the actual duty. */
+            uint8_t target_for_ramp = ui8_controller_duty_cycle_target;
+
+            /* Enter soft-launch when starting from zero, target > 0, and no load yet */
+            if (soft_launch_active == 0u) {
+                if ((ui8_g_duty_cycle == 0u) &&
+                    (ui8_controller_duty_cycle_target > 0u) &&
+                    (ui16_adc_battery_current_filtered < I_THRESH_ADC10))
+                {
+                    soft_launch_active  = 1u;
+                    soft_launch_counter = 0u;
+                }
+            } else {
+                /* Raise a soft duty ceiling slowly while waiting for load to appear */
+                uint8_t soft_ceiling = SOFT_START_DUTY;
+                soft_ceiling = (uint8_t)(soft_ceiling + (uint8_t)(soft_launch_counter / SOFT_CEILING_STEP_N));
+                if (soft_ceiling > SOFT_CEILING_MAX) soft_ceiling = SOFT_CEILING_MAX;
+
+                if (target_for_ramp > soft_ceiling)
+                    target_for_ramp = soft_ceiling;
+
+                /* keep time and exit when load shows up or we time out */
+                soft_launch_counter++;
+                if ((ui16_adc_battery_current_filtered >= I_THRESH_ADC10) ||
+                    (soft_launch_counter >= SOFT_LAUNCH_MAX_TICKS))
+                {
+                    soft_launch_active = 0u;
+                }
+            }
+
+            /* ---------------- Snappy but safe duty ramp (uses target_for_ramp) ---------------- */
+            const uint8_t FAST_GAP_UP    = 8u;   /* if target-actual >= 8, fast ramp */
+            const uint8_t STEP_UP_FAST   = 3u;   /* +3 when far from target */
+            const uint8_t STEP_UP_SLOW   = 1u;   /* +1 when close */
+            const uint8_t STEP_DOWN_FAST = 2u;   /* -2 when far over / braking / over-phase */
+            const uint8_t STEP_DOWN_SLOW = 1u;   /* -1 gentle */
+
+            /* Direction flags (no stdbool) */
+            uint8_t must_ramp_down = 0u;
+            uint8_t can_ramp_up    = 0u;
+
+            if ((target_for_ramp < ui8_g_duty_cycle) ||                                          /* target < actual */
+                (ui16_controller_adc_battery_current_target < ui16_adc_battery_current_filtered) || /* requested Ibat < measured */
+                (ui16_adc_motor_phase_current > ui16_adc_motor_phase_current_max) ||             /* phase over limit */
+                /* (ui16_hall_counter_total < (HALL_COUNTER_FREQ / MOTOR_OVER_SPEED_ERPS)) || */ /* overspeed (disabled) */
+                (ui16_adc_voltage < ui16_adc_voltage_cut_off) ||                                 /* undervoltage */
+                (ui8_brake_state != 0))
+            {
+                must_ramp_down = 1u;
+            }
+            else if ((target_for_ramp > ui8_g_duty_cycle) &&
+                (ui16_controller_adc_battery_current_target > ui16_adc_battery_current_filtered))
+            {
+                can_ramp_up = 1u;
+            }
+
+            if (must_ramp_down) {
+                ui8_counter_duty_cycle_ramp_up = 0;
+
+                if (++ui8_counter_duty_cycle_ramp_down > ui8_controller_duty_cycle_ramp_down_inverse_step) {
+                    ui8_counter_duty_cycle_ramp_down = 0;
+
+                    /* FW first, then duty—keeps original behavior */
+                    if (ui8_fw_hall_counter_offset > 0) {
+                        ui8_fw_hall_counter_offset--;
+                    } else if (ui8_g_duty_cycle > 0) {
+                        uint8_t step = STEP_DOWN_SLOW;
+                        if ((ui8_g_duty_cycle > (uint8_t)(target_for_ramp + FAST_GAP_UP)) ||
+                            (ui8_brake_state != 0) ||
+                            (ui16_adc_motor_phase_current > ui16_adc_motor_phase_current_max))
+                        {
+                            step = STEP_DOWN_FAST;
+                        }
+                        ui8_g_duty_cycle = (ui8_g_duty_cycle > step) ? (uint8_t)(ui8_g_duty_cycle - step) : 0u;
+                    }
+                }
+            }
+            else if (can_ramp_up) {
+                ui8_counter_duty_cycle_ramp_down = 0;
+
+                if (++ui8_counter_duty_cycle_ramp_up > ui8_controller_duty_cycle_ramp_up_inverse_step) {
+                    ui8_counter_duty_cycle_ramp_up = 0;
+
+                    if (ui8_g_duty_cycle < PWM_DUTY_CYCLE_STARTUP) {
+                        ui8_g_duty_cycle = PWM_DUTY_CYCLE_STARTUP;  /* avoid sticky crawl */
+                    } else if (ui8_g_duty_cycle < PWM_DUTY_CYCLE_MAX) {
+                        uint8_t gap  = (uint8_t)(target_for_ramp - ui8_g_duty_cycle);
+                        uint8_t step = (gap >= FAST_GAP_UP) ? STEP_UP_FAST : STEP_UP_SLOW;
+
+                        uint16_t next = (uint16_t)ui8_g_duty_cycle + (uint16_t)step;
+                        if (next > target_for_ramp)     next = target_for_ramp;
+                        if (next > PWM_DUTY_CYCLE_MAX)  next = PWM_DUTY_CYCLE_MAX;
+                        ui8_g_duty_cycle = (uint8_t)next;
+                    }
+                }
+            }
+            else if ((ui8_field_weakening_enabled != 0u) && (ui8_g_duty_cycle == PWM_DUTY_CYCLE_MAX)) {
+                /* No change needed on duty; allow FW to climb smoothly */
+                ui8_counter_duty_cycle_ramp_down = 0;
+                if (++ui8_counter_duty_cycle_ramp_up > ui8_controller_duty_cycle_ramp_up_inverse_step) {
+                    ui8_counter_duty_cycle_ramp_up = 0;
+                    if (ui8_fw_hall_counter_offset < ui8_fw_hall_counter_offset_max) {
+                        ui8_fw_hall_counter_offset++;
+                    }
+                }
+            }
+            else {
+                /* Target met; idle counters */
+                ui8_counter_duty_cycle_ramp_up   = 0;
+                ui8_counter_duty_cycle_ramp_down = 0;
+            }
+        }
+
+
+
+        motor lead angle tweak based on the original reliable method - now its a bit more dynamic
+
+        if (ui8_g_duty_cycle > 0) {
+
+            // --- calculate phase current ---
+            if (ui8_g_duty_cycle > 10) {
+                ui16_adc_motor_phase_current =
+                (uint16_t)(((uint32_t)ui16_adc_battery_current_filtered << 8) / ui8_g_duty_cycle);
+            } else {
+                ui16_adc_motor_phase_current = ui16_adc_battery_current_filtered;
+            }
+
+            if (ui8_foc_flag) {  // once per electric rotation
+
+                // --- current-based FOC advance with progressive slope ---
+                uint8_t foc_raw = (uint8_t)
+                ((((uint16_t)ui16_adc_battery_current_filtered *
+                (uint16_t)ui8_foc_angle_multiplicator) + 128u) >> 8);
+
+                // apply gentle bias curve so advance starts slower and ramps faster
+                // below ~⅓ current range -> reduce advance by 40%
+                // midrange -> linear
+                // high current -> up to 1.2× boost (adds punch only at load)
+                if (foc_raw < 8u) {
+                    foc_raw = (uint8_t)((uint16_t)foc_raw * 60u / 100u);
+                } else if (foc_raw > 18u) {
+                    uint8_t boost = foc_raw - 18u;
+                    foc_raw += (uint8_t)((uint16_t)boost * 20u / 100u);
+                }
+
+                // hard cap
+                if (foc_raw > 30u)
+                    foc_raw = 30u;
+
+                ui8_g_foc_angle = foc_raw;
+            }
+
+        } else {  // duty cycle = 0
+            ui16_adc_motor_phase_current = 0;
+            ui8_g_foc_angle = 0;
+        }
+
+        // clear once per rotation AFTER both branches
+        ui8_foc_flag = 0;
+
+        Custom throttle response curve thats current based(more throttle = motor go more weeeee)
+        i made this curve so i can actually control my speed and not have throttle feel like an on off switch
+        it takes advantage of the unused value "ui8_adc_pedal_torque_angle_adj" when u move this up or down, it moves the throttle mid lower or higher, either giving more low end punch or ez modulation. i added an ease on the first 30% of the range to help control bike in a low gear low speed after testing my cuty cycle tweak, the smallest bump gave the old wheelie syndrome,but i got the default poo poo thumb throttle still
+
+        ebike.c tweaks below
+
+        static void apply_throttle(void)
+{
+	// Read throttle ADC (10 bits after >>2)
+	ui16_adc_throttle = (XMC_VADC_GROUP_GetResult(vadc_0_group_1_HW , VADC_POT_RESULT_REG ) & 0x0FFF) >> 2;
+
+	if (ui8_throttle_feature_enabled) {
+		// map adc value from 0..255 using calibration
+		ui8_throttle_adc_in = map_ui8((uint8_t)(ui16_adc_throttle >> 2),
+									  ui8_throttle_min,
+								ui8_throttle_max,
+								(uint8_t)0,
+									  (uint8_t)255);
+
+		// --- Static ease-in on first ~30% (tames bumps, keeps full range) ---Hazza
+		{
+			uint16_t x = ui8_throttle_adc_in;      // 0..255
+			const uint16_t T = 77U;                // ~30% of 255
+
+			// Optional: suppress micro-jitter near idle
+			if (x < 3U) x = 0U;
+
+			uint16_t y;
+			if (x <= T) {
+				// Quadratic ease-in mapped 0..T → 0..T
+				y = (uint16_t)((x * x + (T >> 1)) / T);
+			} else {
+				y = x; // above 30%: untouched
+			}
+
+			if (y > 255U) y = 255U;
+			ui8_throttle_adc_in = (uint8_t)y;
+		}
+
+		// --- One-knob mid-point shaping (0..40 → mid at 30..70%) ---Hazza
+		{
+			uint8_t k = ui8_adc_pedal_torque_angle_adj; // 0..40 from display
+			if (k > 40U) k = 40U;
+
+			uint16_t mid_pct = 30U + ((uint16_t)k * 40U) / 40U;  // 30..70
+			uint16_t mid255  = (mid_pct * 255U + 50U) / 100U;    // 77..178
+
+			uint16_t x = ui8_throttle_adc_in; // 0..255
+			uint16_t y;
+			if (x <= 127U) {
+				y = (x * mid255 + 63U) / 127U;
+			} else {
+				uint16_t top = 255U - mid255;
+				y = mid255 + (((x - 128U) * top + 63U) / 127U);
+			}
+			if (y > 255U) y = 255U;
+			ui8_throttle_adc_in = (uint8_t)y;
+		}
+
+
+		some miscellaneous code that will help you match functions to port,
+		a little helper to fix legal street mode if you convert ui8 to ui16
+
+		// --- Read display "power limit" (units of 25 W) ---
+		ui8_target_battery_max_power_div25 = ui8_rx_buffer[6];
+
+		// --- Compute an ADC-steps cap from power for STREET, else use global max for OFF-ROAD ---
+		{
+			// Decide street/off-road. If you have a real flag, prefer that.
+			// bool is_street = (m_configuration_variables.ui8_street_mode_enabled != 0);
+			bool is_street = (ui8_target_battery_max_power_div25 > 0) && (ui8_target_battery_max_power_div25 < 15);
+
+			if (is_street) {
+				// power_mW = (div25 * 25 W) * 1000
+				uint32_t power_mW = (uint32_t)ui8_target_battery_max_power_div25 * 25u * 1000u;
+
+				// current_x100 = (power_mW / Vbat_mV) * 100  = A*100
+				// ui16_battery_voltage_filtered_x1000 is in mV (per your code paths)
+				uint32_t current_x100 = (ui16_battery_voltage_filtered_x1000 > 0)
+				? (power_mW / ui16_battery_voltage_filtered_x1000) * 100u
+				: 0u;
+
+				// steps = (A*100) / (A/step *100) = ADC steps
+				uint32_t steps = (BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100 > 0)
+				? (current_x100 / (uint32_t)BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100)
+				: 0u;
+
+				// clamp to system max
+				if (steps > ADC_10_BIT_BATTERY_CURRENT_MAX) steps = ADC_10_BIT_BATTERY_CURRENT_MAX;
+
+				ui16_adc_battery_current_max = (uint16_t)steps;
+			} else {
+				// OFF-ROAD: full system limit
+				ui16_adc_battery_current_max = ADC_10_BIT_BATTERY_CURRENT_MAX;
+			}
+		}
+
+		// --- Derive phase-current max and overcurrent from that single source of truth ---
+		{
+			uint32_t t = (uint32_t)ui16_adc_battery_current_max * (uint32_t)ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX;
+			ui16_adc_motor_phase_current_max = (uint16_t)(t / (uint32_t)ADC_10_BIT_BATTERY_CURRENT_MAX);
+			if (ui16_adc_motor_phase_current_max > ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX)
+				ui16_adc_motor_phase_current_max = ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX;
+
+			uint16_t oc = ui16_adc_battery_current_max + ADC_10_BIT_BATTERY_EXTRACURRENT;
+			ui8_adc_battery_overcurrent = (oc > 255u) ? 255u : (uint8_t)oc;
+		}
+
+
+		throttle amp target
+
+		// limit to battery current max
+				if (ui16_adc_battery_current_target_throttle > ui16_adc_battery_current_max) {
+					ui16_adc_battery_current_target = ui16_adc_battery_current_max;
+				} else {
+					ui16_adc_battery_current_target = ui16_adc_battery_current_target_throttle;
+				}
+
+				// always full duty, current control is the limiter
+				ui8_duty_cycle_target = PWM_DUTY_CYCLE_MAX;
+
+
+		battery+mtor current filtered
+
+		/ Calculate filtered Battery Current (Ampx5)
+  ui16_battery_current_filtered_x5 = (uint16_t)(((uint32_t) ui16_adc_battery_current_filtered * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) / 20);
+
+	// Calculate filtered Motor Current (Ampx5)
+    ui16_motor_current_filtered_x5 = (uint16_t)(((uint16_t) ui16_adc_motor_phase_current * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) / 20);
+
+    	if (ui16_adc_battery_current_target > ui16_adc_battery_current_max) {
+			ui16_adc_battery_current_target = ui16_adc_battery_current_max;
+		}
+
+main.h tweaks below
+
+
+
+// adc current (38 = 6A, 50 = 8A, 112 = 18A, 124 = 20A , 136 = 22A, 143 = 23A, 187 = 30A)
+#define ADC_10_BIT_BATTERY_EXTRACURRENT      53   // 8 / 0.15 = 53.3
+// 🔥 Hazza high-amp build
+#define ADC_10_BIT_BATTERY_CURRENT_MAX       200  // 30 / 0.15 = 200
+
+// 🐱‍👤 Safe / "pussy" build
+//#define ADC_10_BIT_BATTERY_CURRENT_MAX      150 // ~24 A limit (150 * 0.16 = 24 A)
+
+#define ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX   333  // 50 / 0.15 = 333.3
+
+#define DEFAULT_VALUE_BATTERY_CURRENT_MAX  30  // 30 amps Used only in 860C version
+
+
+#define BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100 15  // 0.15 A/step

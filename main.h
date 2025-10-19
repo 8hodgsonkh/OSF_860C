@@ -39,6 +39,7 @@
 #define DEFAULT_RAMP_UP_INVERSE_TESTING     194     // min = 24(=100% accel), default= 194 (=0% accel)
 #define DEFAULT_RAMP_DOWN_INVERSE_TESTING   73     // min = 9 (=100%decel), default = 73 (=0% decel)
 
+#define FOC_USE_NEW (1) //hazzafoc
 
 // here the 2 modes; note TESTING_MODE = allow e.g. to find best global offset angle or to run at a fixed duty cycle
 #define NORMAL_RUNNING_MODE 0     // motor run as usual

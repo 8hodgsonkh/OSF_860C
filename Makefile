@@ -95,10 +95,11 @@ SOURCES=
 
 # Like SOURCES, but for include directories. Value should be paths to
 # directories (without a leading -I).
-INCLUDES=
-
+INCLUDES += $(HOME)/ModusToolbox/tools_3.5/arm/CMSIS/Core/Include
+INCLUDES += $(HOME)/ModusToolbox/tools_3.5/arm/CMSIS/Include
+INCLUDES += $(HOME)/ModusToolbox/tools_3.5/arm/CMSIS/Source
 # Add additional defines to the build process (without a leading -D).
-DEFINES=
+DEFINES  += ARM_MATH_CM0
 
 # Select softfp or hardfp floating point. Default is softfp.
 VFP_SELECT=
@@ -108,6 +109,8 @@ VFP_SELECT=
 # NOTE: Includes and defines should use the INCLUDES and DEFINES variable
 # above.
 CFLAGS=-gdwarf-3
+# --- CMSIS-DSP include paths ---
+
 
 # Additional / custom C++ compiler flags.
 #

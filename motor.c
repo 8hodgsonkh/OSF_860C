@@ -824,8 +824,8 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
                 }
 
                 // hard cap
-                if (foc_raw > 35u)
-                    foc_raw = 35u;
+                if (foc_raw > 30u)
+                    foc_raw = 30u;
 
                 ui8_g_foc_angle = foc_raw;
             }
