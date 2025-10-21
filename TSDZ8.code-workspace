@@ -1,12 +1,14 @@
 {
     "folders": [
-
-		{
-			"path": "."
-		},
-		{
-			"path": "../mtb_shared"
-		}
+        {
+            "path": "."
+        },
+        {
+            "path": "../mtb_shared"
+        },
+        {
+            "path": "../shared_test"
+        }
     ],
     "settings": {
         //mtb//  If this project will be shared with multiple users, the

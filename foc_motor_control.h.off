@@ -72,5 +72,6 @@ typedef struct {
 // -----------------------------------------------------------------------------
 void foc_init(FOC_Controller_t* foc_controller);
 void foc_run_control_loop(FOC_Controller_t* foc_controller);
+void pid_init(PID_Controller_t* pid, q15_t Kp, q15_t Ki, q15_t output_max);
 
 #endif // FOC_MOTOR_CONTROL_H

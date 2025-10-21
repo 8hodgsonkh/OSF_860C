@@ -22,8 +22,8 @@ extern const uint16_t hall_position_angle_reverse[8];
 // =================================================================================
 
 static void foc_hardware_read_currents(int16_t* Iu_raw, int16_t* Iw_raw) {
-    *Iu_raw = (int16_t)XMC_VADC_GROUP_GetResult(VADC_I_U_GROUP, VADC_I_U_RESULT_REG);
-    *Iw_raw = (int16_t)XMC_VADC_GROUP_GetResult(VADC_I_W_GROUP, VADC_I_W_RESULT_REG);
+    *Iu_raw = (int16_t)XMC_VADC_GROUP_GetResult(VADC_I1_GROUP, VADC_I1_RESULT_REG);
+    *Iw_raw = (int16_t)XMC_VADC_GROUP_GetResult(VADC_I3_GROUP, VADC_I3_RESULT_REG);
 }
 
 static int16_t foc_hardware_get_electrical_angle() {
@@ -31,7 +31,7 @@ static int16_t foc_hardware_get_electrical_angle() {
     uint16_t hall_duration = ui16_hall_counter_log;
     uint16_t hall_timer_now = ui16_hall_counter;
 
-    if (motor_direction == MOTOR_DIRECTION_FORWARD) {
+    if (motor_direction == MOTOR_FORWARD) {
         coarse_angle_degrees = hall_position_angle_forward[ui8_hall_state];
     } else {
         coarse_angle_degrees = hall_position_angle_reverse[ui8_hall_state];
@@ -51,9 +51,9 @@ static int16_t foc_hardware_get_electrical_angle() {
 }
 
 static void foc_hardware_update_pwm(uint16_t pwm_u, uint16_t pwm_v, uint16_t pwm_w) {
-    XMC_CCU4_SLICE_SetTimerCompareMatch(SLICE_U, pwm_u);
-    XMC_CCU4_SLICE_SetTimerCompareMatch(SLICE_V, pwm_v);
-    XMC_CCU4_SLICE_SetTimerCompareMatch(SLICE_W, pwm_w);
+    XMC_CCU8_SLICE_SetTimerCompareMatch(PHASE_U_TIMER_HW, XMC_CCU8_SLICE_COMPARE_CHANNEL_1, pwm_u);
+    XMC_CCU8_SLICE_SetTimerCompareMatch(PHASE_V_TIMER_HW, XMC_CCU8_SLICE_COMPARE_CHANNEL_1, pwm_v);
+    XMC_CCU8_SLICE_SetTimerCompareMatch(PHASE_W_TIMER_HW, XMC_CCU8_SLICE_COMPARE_CHANNEL_1, pwm_w);
 }
 
 
@@ -89,14 +89,14 @@ static void clarke_transform(q15_t Iu, q15_t Iv, q15_t* I_alpha, q15_t* I_beta) 
 
 static void park_transform(q15_t I_alpha, q15_t I_beta, int16_t angle, q15_t* Id, q15_t* Iq) {
     q15_t cos_theta, sin_theta;
-    arm_sin_cos_q15((uint32_t)angle << 16, &sin_theta, &cos_theta);
+    arm_sin_cos_q15(angle, &sin_theta, &cos_theta);
     *Id = Q15_MUL(I_alpha, cos_theta) + Q15_MUL(I_beta, sin_theta);
     *Iq = Q15_MUL(I_beta, cos_theta) - Q15_MUL(I_alpha, sin_theta);
 }
 
 static void inverse_park_transform(q15_t Vd, q15_t Vq, int16_t angle, q15_t* V_alpha, q15_t* V_beta) {
     q15_t cos_theta, sin_theta;
-    arm_sin_cos_q15((uint32_t)angle << 16, &sin_theta, &cos_theta);
+    arm_sin_cos_q15(angle, &sin_theta, &cos_theta);
     *V_alpha = Q15_MUL(Vd, cos_theta) - Q15_MUL(Vq, sin_theta);
     *V_beta  = Q15_MUL(Vd, sin_theta) + Q15_MUL(Vq, cos_theta);
 }

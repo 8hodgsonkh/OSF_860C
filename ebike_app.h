@@ -54,6 +54,8 @@ extern uint8_t ui8_m_system_state;
 extern uint8_t ui8_m_motor_init_state ;
 extern uint8_t ui8_m_motor_init_status;
 
+extern uint8_t g_clutch_active;
+
 
 /*
 typedef struct  _configuration_variables

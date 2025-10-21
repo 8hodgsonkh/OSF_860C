@@ -827,31 +827,15 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
 
             if (ui8_foc_flag) {  // once per electric rotation
 
-                // --- Hazza's V3 FOC: Dynamic Ceiling ---
-                // 1. Determine the maximum allowed FOC for the current speed (duty cycle).
-                // This creates a rising ceiling on the advance.
-                uint8_t foc_limit = ui8_foc_angle_multiplicator;
-                if (foc_limit > 35) foc_limit = 35; // Hard safety limit
+                // --- current-based FOC advance with progressive slope ---
+                uint8_t foc_raw = (uint8_t)
+                ((((uint16_t)ui16_adc_battery_current_filtered *
+                (uint16_t)ui8_foc_angle_multiplicator) + 128u) >> 8);
 
-                uint8_t max_foc_for_this_speed = (uint8_t)(((uint32_t)foc_limit * (uint32_t)ui8_g_duty_cycle) / 255);
-
-                // 2. Calculate the two types of desired advance.
-                // a) Load-based advance, which also scales its aggressiveness with speed.
-                const uint8_t FOC_MULT_MIN = 10; // Start with a gentle multiplier
-                uint32_t dynamic_multiplier = FOC_MULT_MIN +
-                    (((uint32_t)(foc_limit - FOC_MULT_MIN) * (uint32_t)ui8_g_duty_cycle) / 255);
-                uint8_t load_advance = (uint8_t)((((uint32_t)ui16_adc_battery_current_filtered * dynamic_multiplier) + 128u) >> 8);
-
-                // b) Speed-based "granny gear" advance for no-load smoothness.
-                uint8_t speed_advance = (uint8_t)(((uint16_t)ui8_g_duty_cycle * 11) >> 8); // Approx duty/23
-
-                // 3. Choose the greater of the two desired advances.
-                uint8_t desired_foc = (load_advance > speed_advance) ? load_advance : speed_advance;
-
-                // 4. Apply the dynamic ceiling. The advance can't exceed what's allowed for the current speed.
-                uint8_t foc_raw = (desired_foc > max_foc_for_this_speed) ? max_foc_for_this_speed : desired_foc;
-
-                // 5. Apply the original, proven bias curve for smooth response.
+                // apply gentle bias curve so advance starts slower and ramps faster
+                // below ~⅓ current range -> reduce advance by 40%
+                // midrange -> linear
+                // high current -> up to 1.2× boost (adds punch only at load)
                 if (foc_raw < 8u) {
                     foc_raw = (uint8_t)((uint16_t)foc_raw * 60u / 100u);
                 } else if (foc_raw > 18u) {
@@ -859,8 +843,10 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
                     foc_raw += (uint8_t)((uint16_t)boost * 20u / 100u);
                 }
 
-                // 6. Final value is assigned. A hard cap isn't strictly needed due to the ceiling, but we keep it for safety.
-                if (foc_raw > foc_limit) foc_raw = foc_limit;
+                // hard cap
+                if (foc_raw > 30u)
+                    foc_raw = 30u;
+
                 ui8_g_foc_angle = foc_raw;
             }
 

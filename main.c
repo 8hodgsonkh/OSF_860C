@@ -26,6 +26,7 @@
 
 #include "motor.h"
 #include "ebike_app.h"
+//#include "foc_motor_control.h"
 //#include "eeprom.h"
 
 
@@ -34,6 +35,8 @@
 *******************************************************************************/
 /* SysTick timer frequency in Hz  */
 #define TICKS_PER_SECOND            1000 // 1 tick = 1msec
+
+#define USE_FOC_CONTROL 0
 
 
 /*******************************************************************************
@@ -47,10 +50,16 @@ uint32_t loop_25ms_ticks = 0;
 uint32_t start = 0 ; // mainly for debugging ; allow to print some variable every e.g. 5 sec
 */
 uint16_t last_clock_ticks = 0;  // used to call a function every 25 ms (ebbike controller at 40Hz)
-uint16_t last_foc_pid_ticks = 0;    // used to call a function every 10 msec (update foc pid angle at 100hz)
+//uint16_t last_foc_pid_ticks = 0;    // used to call a function every 10 msec (update foc pid angle at 100hz)
 uint16_t last_foc_optimiser_ticks = 0 ; // used to call a function every 200 msec (update of optimizer at 5 hz)
 uint16_t last_system_ticks = 0;
 volatile uint32_t system_ticks2 = 0;
+
+
+// FOC controller instance
+#if (USE_FOC_CONTROL == 1)
+FOC_Controller_t foc_controller;
+#endif
 
 
 // maximum duty cycle
@@ -188,6 +197,9 @@ int main(void)
     }
     
     
+#if (USE_FOC_CONTROL == 1)
+    foc_init(&foc_controller);
+#endif
 
 
     /*
