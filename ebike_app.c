@@ -5,9 +5,6 @@
  *
  * Released under the GPL License, Version 3
  */
-#include "cybsp.h"
-#include "cy_utils.h"
-#include "cy_retarget_io.h"
 #include "ebike_app.h"
 #include "main.h"
 #include "motor.h"
@@ -1305,177 +1302,108 @@ static void apply_calibration_assist(void)
 
 
 
+// ===== HAZZA_THROTTLE_BEGIN =====
 static void apply_throttle(void)
 {
-	// --- Ballistic Synchro-Grab State Machine ---
-	static enum {
-		THROTTLE_IDLE,
-		THROTTLE_SEEK,
-		THROTTLE_ACTIVE
-	} throttle_state = THROTTLE_IDLE;
-	static uint8_t seek_timeout_counter = 0;
+	static enum { THROTTLE_IDLE, THROTTLE_SEEK, THROTTLE_ACTIVE } throttle_state = THROTTLE_IDLE;
+	static uint8_t seek_timeout_counter = 0u;
 
-	// Read throttle ADC (10 bits after >>2)
 	ui16_adc_throttle = (XMC_VADC_GROUP_GetResult(vadc_0_group_1_HW , VADC_POT_RESULT_REG ) & 0x0FFF) >> 2;
 
 	if (ui8_throttle_feature_enabled) {
-		// map adc value from 0..255 using calibration
 		ui8_throttle_adc_in = map_ui8((uint8_t)(ui16_adc_throttle >> 2),
-									  ui8_throttle_min,
-								ui8_throttle_max,
-								(uint8_t)0,
-									  (uint8_t)255);
+									  ui8_throttle_min, ui8_throttle_max, 0u, 255u);
 
-		// --- Static ease-in on first ~30% (tames bumps, keeps full range) ---Hazza
+		// Ease-in for first ~30%
 		{
-			uint16_t x = ui8_throttle_adc_in;      // 0..255
-			const uint16_t T = 77U;                // ~30% of 255
-
-			// Optional: suppress micro-jitter near idle
-			if (x < 3U) x = 0U;
-
-			uint16_t y;
-			if (x <= T) {
-				// Quadratic ease-in mapped 0..T → 0..T
-				y = (uint16_t)((x * x + (T >> 1)) / T);
-			} else {
-				y = x; // above 30%: untouched
-			}
-
-			if (y > 255U) y = 255U;
+			uint16_t x = ui8_throttle_adc_in;
+			const uint16_t T = 77u;
+			if (x < 3u) x = 0u;
+			uint16_t y = (x <= T) ? (uint16_t)((x * x + (T >> 1)) / T) : x;
+			if (y > 255u) y = 255u;
 			ui8_throttle_adc_in = (uint8_t)y;
 		}
 
-		// --- One-knob mid-point shaping (0..40 → mid at 30..70%) ---Hazza
+		// Midpoint shaping (display knob 0..40 → mid 30..70%)
 		{
-			uint8_t k = ui8_adc_pedal_torque_angle_adj; // 0..40 from display
-			if (k > 40U) k = 40U;
-
-			uint16_t mid_pct = 30U + ((uint16_t)k * 40U) / 40U;  // 30..70
-			uint16_t mid255  = (mid_pct * 255U + 50U) / 100U;    // 77..178
-
-			uint16_t x = ui8_throttle_adc_in; // 0..255
-			uint16_t y;
-
-			if (x <= 128) {
-				// Maps input 0-128 to output 0-mid255
-				y = ((uint32_t)x * mid255) / 128;
-			} else {
-				// Maps input 129-255 to output mid255-255
-				y = mid255 + ((uint32_t)(x - 128) * (255 - mid255)) / 127;
-			}
-
-			if (y > 255U) y = 255U;
+			uint8_t k = ui8_adc_pedal_torque_angle_adj; if (k > 40u) k = 40u;
+			uint16_t mid_pct = 30u + ((uint16_t)k * 40u) / 40u;
+			uint16_t mid255  = (mid_pct * 255u + 50u) / 100u;
+			uint16_t x = ui8_throttle_adc_in, y;
+			if (x <= 128u) y = ((uint32_t)x * mid255) / 128u;
+			else           y = mid255 + ((uint32_t)(x - 128u) * (255u - mid255)) / 127u;
+			if (y > 255u) y = 255u;
 			ui8_throttle_adc_in = (uint8_t)y;
 		}
 
-
-
-		// select throttle assist source
+		// Select assist source and apply legal gate
 		if (ui8_throttle_virtual) {
 			ui8_adc_throttle_assist = ui8_throttle_virtual;
-		}
-		else if ((ui8_optional_ADC_function == THROTTLE_CONTROL) && (ui8_throttle_adc_in)) {
+		} else if ((ui8_optional_ADC_function == THROTTLE_CONTROL) && (ui8_throttle_adc_in)) {
 			ui8_adc_throttle_assist = ui8_throttle_adc_in;
+		} else {
+			ui8_adc_throttle_assist = 0u;
 		}
-		else {
-			ui8_adc_throttle_assist = 0;
-		}
-
-		// enforce legal: disable if pedaling required but no cadence
-		if ((ui8_throttle_legal) && (!ui8_pedal_cadence_RPM)) {
-			ui8_adc_throttle_assist = 0;
+		if (ui8_throttle_legal && (!ui8_pedal_cadence_RPM)) {
+			ui8_adc_throttle_assist = 0u;
 		}
 
-		// --- State Machine Logic ---
-		if (ui8_adc_throttle_assist == 0) {
+		if (ui8_adc_throttle_assist == 0u) {
 			throttle_state = THROTTLE_IDLE;
 		}
 
 		switch (throttle_state) {
-			case THROTTLE_IDLE:
-				if (ui8_adc_throttle_assist > 0) {
-					// Throttle applied. Decide whether to SEEK or go straight to ACTIVE.
-					if (ui8_g_duty_cycle == 0 && ui16_motor_speed_erps < 5) {
-						throttle_state = THROTTLE_SEEK;
-						seek_timeout_counter = 0; // Reset timeout
-					} else {
-						throttle_state = THROTTLE_ACTIVE;
-					}
-				}
-				break;
-
-			case THROTTLE_SEEK:
-				// In SEEK mode, we command high duty cycle but zero current.
-				// This spins the motor fast with no torque to find the engagement point.
-				ui8_duty_cycle_target = PWM_DUTY_CYCLE_MAX;
-				ui16_adc_battery_current_target = 0; // No torque!
-
-				// Check for the "grab" by listening for a current spike.
-				// 1.5A threshold: 150 / 16 (current per step) = ~9
-				const uint16_t GRAB_CURRENT_THRESHOLD = 9;
-				if (ui16_adc_battery_current_filtered > GRAB_CURRENT_THRESHOLD) {
-					throttle_state = THROTTLE_ACTIVE; // Grab detected! Go to active.
-				}
-
-				// Safety timeout: if grab not detected after ~250ms, go active anyway.
-				seek_timeout_counter++;
-				if (seek_timeout_counter > 10) { // 10 * 25ms = 250ms
+		case THROTTLE_IDLE:
+			if (ui8_adc_throttle_assist > 0u) {
+				if ((ui8_g_duty_cycle == 0u) && (ui16_motor_speed_erps < 5u)) {
+					throttle_state = THROTTLE_SEEK; seek_timeout_counter = 0u;
+				} else {
 					throttle_state = THROTTLE_ACTIVE;
 				}
-				break;
+			}
+			break;
 
-			case THROTTLE_ACTIVE:
-				// This is the normal power-delivery mode.
-				// 🔥 widen to 16-bit: map 0..255 → 0..ui16_adc_battery_current_max
-				uint16_t ui16_adc_battery_current_target_throttle =
-				((uint16_t)ui8_adc_throttle_assist * ui16_adc_battery_current_max + 127) / 255;
+		case THROTTLE_SEEK:
+			ui8_duty_cycle_target = PWM_DUTY_CYCLE_MAX;
+			ui16_adc_battery_current_target = 0u;
+			if (ui16_adc_battery_current_filtered > 9u) throttle_state = THROTTLE_ACTIVE; // ~1.5A
+			if (++seek_timeout_counter > 10u) throttle_state = THROTTLE_ACTIVE; // ~250ms
+			break;
 
-				if (ui16_adc_battery_current_target_throttle > ui16_adc_battery_current_target) {
-					// set motor accel/decel ramps
-					if (ui16_wheel_speed_x10 >= 255) {
-						ui8_duty_cycle_ramp_up_inverse_step   = THROTTLE_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_MIN;
-						ui8_duty_cycle_ramp_down_inverse_step = PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_MIN;
-					}
-					else {
-						ui8_duty_cycle_ramp_up_inverse_step = map_ui8((uint8_t)ui16_wheel_speed_x10,
-																	  (uint8_t)40,
-																	  (uint8_t)255,
-																	  (uint8_t)THROTTLE_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_DEFAULT,
-																	  (uint8_t)THROTTLE_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_MIN);
+		case THROTTLE_ACTIVE:
+		{
+			uint16_t tgt = (uint16_t)(((uint32_t)ui8_adc_throttle_assist * ui16_adc_battery_current_max + 127u) / 255u);
 
-						ui8_duty_cycle_ramp_down_inverse_step = map_ui8((uint8_t)ui16_wheel_speed_x10,
-																		(uint8_t)40,
-																		(uint8_t)255,
-																		(uint8_t)PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_DEFAULT,
-																		(uint8_t)PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_MIN);
-					}
+			if (ui16_wheel_speed_x10 >= 255u) {
+				ui8_duty_cycle_ramp_up_inverse_step   = THROTTLE_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_MIN;
+				ui8_duty_cycle_ramp_down_inverse_step = PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_MIN;
+			} else {
+				ui8_duty_cycle_ramp_up_inverse_step =
+					map_ui8((uint8_t)ui16_wheel_speed_x10, 40u, 255u,
+							THROTTLE_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_DEFAULT,
+							THROTTLE_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_MIN);
+				ui8_duty_cycle_ramp_down_inverse_step =
+					map_ui8((uint8_t)ui16_wheel_speed_x10, 40u, 255u,
+							PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_DEFAULT,
+							PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_MIN);
+			}
 
-					// limit to battery current max
-					if (ui16_adc_battery_current_target_throttle > ui16_adc_battery_current_max) {
-						ui16_adc_battery_current_target = ui16_adc_battery_current_max;
-					} else {
-						ui16_adc_battery_current_target = ui16_adc_battery_current_target_throttle;
-					}
-
-					// always full duty, current control is the limiter
-					ui8_duty_cycle_target = PWM_DUTY_CYCLE_MAX;
-				}
-				break;
+			if (tgt > ui16_adc_battery_current_max) tgt = ui16_adc_battery_current_max;
+			ui16_adc_battery_current_target = tgt;
+			ui8_duty_cycle_target = PWM_DUTY_CYCLE_MAX;
+		} break;
 		}
 
-		// This part is outside the state machine, so it always applies if throttle is not active.
-		// If the main assist mode is not asking for power, and we are not actively using the throttle,
-		// then we should not be applying any throttle power.
-		if (throttle_state != THROTTLE_ACTIVE && throttle_state != THROTTLE_SEEK) {
-			// This ensures that if another assist mode is active, the throttle logic doesn't incorrectly override it to zero.
-			// But if no other mode is active, it ensures throttle doesn't leave dangling targets.
-			if (ui16_adc_battery_current_target == 0) {
-				ui8_duty_cycle_target = 0;
+		if ((throttle_state != THROTTLE_ACTIVE) && (throttle_state != THROTTLE_SEEK)) {
+			if (ui16_adc_battery_current_target == 0u) {
+				ui8_duty_cycle_target = 0u;
 			}
 		}
+	} else {
+		// throttle disabled: no target injection
 	}
 }
+// ===== HAZZA_THROTTLE_END =====
 
 static void apply_temperature_limiting(void)
 {

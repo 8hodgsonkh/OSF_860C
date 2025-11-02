@@ -6,18 +6,9 @@
  * Released under the GPL License, Version 3
  */
 #include "main.h"
-#include "cybsp.h"
-#include "cy_utils.h"
 #include "motor.h"
 #include "ebike_app.h"
-#include <stdio.h>
-#include "SEGGER_RTT.h"
-#include "common.h"
 #include "adc.h"
-#include "main.h"
-#include "adc.h"
-#include <math.h>
-#include "cy_retarget_io.h"
 #include <stdint.h>
 //#include "cy_utils.h"
 #if(uCPROBE_GUI_OSCILLOSCOPE == MY_ENABLED)
@@ -45,7 +36,7 @@ static inline uint16_t isqrt_u32(uint32_t x) {
 // Map ADC counts magnitude (~0..4095) to legacy 10-bit units (~0..1023)
 static inline uint16_t counts_to_phase10(int32_t mag_counts) {
     if (mag_counts <= 0) return 0;
-    const int32_t K = 39;   // prior calibration ballpark
+    const int32_t K = 117;  // calibrated for R006 shunts, gain≈20, Vref=3.3V
     const int32_t SHIFT = 11;
     int32_t y = (mag_counts * K) >> SHIFT;
     if (y < 0) y = 0;
@@ -99,7 +90,7 @@ uint8_t ui8_hall_360_ref_valid = 0; // fill with a hall pattern to check sequenc
 uint8_t ui8_motor_commutation_type = BLOCK_COMMUTATION;
 uint8_t ui8_motor_phase_absolute_angle = 0;
 volatile uint16_t ui16_hall_counter_total = 0xffff; // number of tim3 ticks between 2 rotations// inTSDZ2 it was a u16
-static uint16_t ui16_hall_counter_total_previous = 0;  // used to check if erps is stable
+static uint16_t ui16_hall_counter_total_previous __attribute__((unused)) = 0;  // used to check if erps is stable
 uint8_t ui8_interpolation_angle = 0; // interpolation angle
 extern uint16_t ui16_motor_speed_erps;
 extern volatile uint16_t ui16_wheel_speed_x10;
@@ -125,7 +116,7 @@ static uint8_t ui8_counter_duty_cycle_ramp_up = 0;
 static uint8_t ui8_counter_duty_cycle_ramp_down = 0;
 
 // FOC angle
-static uint8_t ui8_foc_angle_accumulated = 0;
+static uint8_t ui8_foc_angle_accumulated __attribute__((unused)) = 0;
 static uint8_t ui8_foc_flag = 0;
 volatile uint8_t ui8_g_foc_angle = 0;
 uint8_t ui8_foc_angle_multiplicator = 0;
@@ -832,10 +823,7 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
         // next line has been moved to ebike_app.c to save time in this irq
         //ui16_adc_throttle = (XMC_VADC_GROUP_GetResult(vadc_0_group_1_HW , 5 ) & 0xFFF) >> 2; // throttle gr1 ch7 result 5  in bg  p2.5
         
-        #if (DYNAMIC_LEAD_ANGLE == (1))
-        // read current iu,iv,iw and start calculating Id with cordic (result will be get at the end of ISR 1 to avoid wait time)       
-        calculate_id_part1();
-        #endif
+    // Removed experimental DYNAMIC_LEAD_ANGLE path (idempotent replace)
         // update foc_angle once per electric rotation (based on foc_flag)
         // --- update FOC angle once per electric rotation ---
         // update foc_angle once per electric rotation (based on fog_flag
@@ -867,54 +855,14 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
 
                 // 5) Map to 10-bit legacy units and export
                 ui16_adc_motor_phase_current = counts_to_phase10((int32_t)mag_counts);
-            }
-
-            if (ui8_foc_flag) {  // once per electric rotation
-
-                // --- Hazza's V3 FOC: Dynamic Ceiling ---
-                // 1. Determine the maximum allowed FOC for the current speed (duty cycle).
-                // This creates a rising ceiling on the advance.
-                uint8_t foc_limit = ui8_foc_angle_multiplicator;
-                if (foc_limit > 35) foc_limit = 35; // Hard safety limit
-
-                uint8_t max_foc_for_this_speed = (uint8_t)(((uint32_t)foc_limit * (uint32_t)ui8_g_duty_cycle) / 255);
-
-                // 2. Calculate the two types of desired advance.
-                // a) Load-based advance, which also scales its aggressiveness with speed.
-                const uint8_t FOC_MULT_MIN = 10; // Start with a gentle multiplier
-                uint32_t dynamic_multiplier = FOC_MULT_MIN +
-                    (((uint32_t)(foc_limit - FOC_MULT_MIN) * (uint32_t)ui8_g_duty_cycle) / 255);
-                uint8_t load_advance = (uint8_t)((((uint32_t)ui16_adc_battery_current_filtered * dynamic_multiplier) + 128u) >> 8);
-
-                // b) Speed-based "granny gear" advance for no-load smoothness.
-                uint8_t speed_advance = (uint8_t)(((uint16_t)ui8_g_duty_cycle * 11) >> 8); // Approx duty/23
-
-                // 3. Choose the greater of the two desired advances.
-                uint8_t desired_foc = (load_advance > speed_advance) ? load_advance : speed_advance;
-
-                // 4. Apply the dynamic ceiling. The advance can't exceed what's allowed for the current speed.
-                uint8_t foc_raw = (desired_foc > max_foc_for_this_speed) ? max_foc_for_this_speed : desired_foc;
-
-                // 5. Apply the original, proven bias curve for smooth response.
-                if (foc_raw < 8u) {
-                    foc_raw = (uint8_t)((uint16_t)foc_raw * 60u / 100u);
-                } else if (foc_raw > 18u) {
-                    uint8_t boost = foc_raw - 18u;
-                    foc_raw += (uint8_t)((uint16_t)boost * 20u / 100u);
+                // Sanity clamp: never exceed configured phase current ceiling
+                if (ui16_adc_motor_phase_current > ui16_adc_motor_phase_current_max) {
+                    ui16_adc_motor_phase_current = ui16_adc_motor_phase_current_max;
                 }
-
-                // 6. Final value is assigned. A hard cap isn't strictly needed due to the ceiling, but we keep it for safety.
-                if (foc_raw > foc_limit) foc_raw = foc_limit;
-                ui8_g_foc_angle = foc_raw;
             }
-
-        } else {  // duty cycle = 0
-            ui16_adc_motor_phase_current = 0;
-            ui8_g_foc_angle = 0;
         }
 
-        // clear once per rotation AFTER both branches
-        ui8_foc_flag = 0;
+        // FOC and duty handled below in consolidated block
 
 
         // get brake state-
@@ -935,176 +883,180 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
     //temp1d = temp1d - start_ticks;
     //if (temp1d > debug_time_ccu8_irq1d) debug_time_ccu8_irq1d = temp1d; // store the max enlapsed time in the irq
     
-                /****************************************************************************/
-        // PWM duty_cycle controller:
-        // - limit battery undervolt
-        // - limit battery max current
-        // - limit motor max phase current
-        // - limit motor max ERPS
-        // - ramp up/down PWM duty_cycle and/or field weakening angle value
-
-        // check if to decrease, increase or maintain duty cycle
-        //note:
-        // ui16_adc_battery_current_filtered is calculated just here above
-        // ui16_adc_motor_phase_current_max = 135 per default for TSDZ2 (13A *100/16) *187/112 = battery_current convert to ADC10bits *and ratio between adc max for phase and for battery
-        //        is initiaded in void ebike_app_init(void) in ebyke_app.c
-        
-        
-        // every 25ms ebike_app_controller fills
-        //  - ui8_controller_adc_battery_current_target
-        //  - ui8_controller_duty_cycle_target
-        //  - ui8_controller_duty_cycle_ramp_up_inverse_step
-        //  - ui8_controller_duty_cycle_ramp_down_inverse_step
-        // Furthermore, when ebike_app_controller starts PWM, g_duty_cycle is first set to PWM_DUTY_CYCLE_STARTUP.
-
+        // ===== HAZZA_FOC_V3_AND_DUTY_BEGIN =====
+        // --- Phase current source select (measured shunt preferred, fallback to legacy est.)
         {
-            /* ---------------- Soft-launch until load is detected (DISABLED) ---------------- */
-            /* C89-safe statics (persist across IRQ calls) */
+            uint16_t phase10_meas = ui16_adc_motor_phase_current; // filled by PWM ISR
+            uint16_t phase10_used;
+
+            if (phase10_meas <= 4095u) {
+                phase10_used = phase10_meas;
+            } else {
+                if (ui8_g_duty_cycle > 10u) {
+                    phase10_used = (uint16_t)(((uint32_t)ui16_adc_battery_current_filtered << 8)
+                                               / ui8_g_duty_cycle);
+                } else {
+                    phase10_used = ui16_adc_battery_current_filtered;
+                }
+            }
+            ui16_adc_motor_phase_current = phase10_used;
+        }
+
+        // --- Hazza FOC V3 with dynamic ceiling & bias curve (once per electrical rotation)
+        if (ui8_g_duty_cycle > 0u) {
+
+            if (ui8_foc_flag) {
+                uint8_t foc_limit = ui8_foc_angle_multiplicator;
+                if (foc_limit > 35u) foc_limit = 35u;
+
+                uint8_t max_foc_for_this_speed =
+                    (uint8_t)(((uint32_t)foc_limit * (uint32_t)ui8_g_duty_cycle) / 255u);
+
+                const uint8_t FOC_MULT_MIN = 10u;
+                uint32_t dynamic_multiplier =
+                    FOC_MULT_MIN + (((uint32_t)(foc_limit - FOC_MULT_MIN) * (uint32_t)ui8_g_duty_cycle) / 255u);
+
+                uint8_t load_advance  = (uint8_t)((((uint32_t)ui16_adc_battery_current_filtered * dynamic_multiplier) + 128u) >> 8);
+                uint8_t speed_advance = (uint8_t)(((uint16_t)ui8_g_duty_cycle * 11u) >> 8); // ≈ duty/23
+
+                uint8_t desired_foc = (load_advance > speed_advance) ? load_advance : speed_advance;
+
+                uint8_t foc_raw = (desired_foc > max_foc_for_this_speed) ? max_foc_for_this_speed : desired_foc;
+
+                if (foc_raw < 8u) {
+                    foc_raw = (uint8_t)((uint16_t)foc_raw * 60u / 100u);
+                } else if (foc_raw > 18u) {
+                    uint8_t boost = (uint8_t)(foc_raw - 18u);
+                    foc_raw += (uint8_t)((uint16_t)boost * 20u / 100u);
+                }
+
+                if (foc_raw > foc_limit) foc_raw = foc_limit;
+                ui8_g_foc_angle = foc_raw;
+
+                if ((ui16_motor_speed_erps < 3u) && (ui8_g_duty_cycle == 0u)) {
+                    ui8_g_foc_angle = 0u;
+                }
+
+                ui8_foc_flag = 0u;
+            }
+
+        } else {
+            ui16_adc_motor_phase_current = 0u;
+            ui8_g_foc_angle = 0u;
+            ui8_foc_flag = 0u;
+        }
+
+        // --- Adaptive duty ramp with soft-launch & protections
+        {
             static uint8_t  soft_launch_active  = 0u;
             static uint16_t soft_launch_counter = 0u;
 
-            /* We clamp the *target* during soft-launch, not the actual duty. */
             uint8_t target_for_ramp = ui8_controller_duty_cycle_target;
 
-            /* Enter soft-launch when starting from zero, target > 0, and no load yet */
-            if (soft_launch_active == 1u) {
-                /* keep time and exit when load shows up or we time out */
-                soft_launch_counter++;
-                if ((ui16_adc_battery_current_filtered >= 3u) || /* 3A threshold */
-                    (soft_launch_counter >= 300u))
-                {
-                    soft_launch_active = 0u;
-                }
-            }
-
-            /* ---------------- Snappy but safe duty ramp (uses target_for_ramp) ---------------- */
-            /* Tunables */
-            const uint8_t FAST_GAP_UP    = 16u;  /* if target-actual >= 16, fast ramp */
-            const uint8_t MED_GAP_UP     = 8u;   /* if target-actual >= 8, med ramp */
-            const uint8_t STEP_UP_FAST   = 4u;   /* +4 when far from target */
-            const uint8_t STEP_UP_MED    = 2u;   /* +2 when medium from target */
-            const uint8_t STEP_UP_SLOW   = 1u;   /* +1 when close */
-            const uint8_t STEP_DOWN_FAST = 2u;   /* -2 when far over / braking / over-phase */
-            const uint8_t STEP_DOWN_SLOW = 1u;   /* -1 gentle */
-
-
-
-            /* Enter soft-launch when starting from zero, target > 0, and no load yet */
             if (ui8_smooth_start_enabled) {
                 if (soft_launch_active == 0u) {
                     if ((ui8_g_duty_cycle == 0u) &&
                         (ui8_controller_duty_cycle_target > 0u) &&
-                        (ui16_adc_battery_current_filtered < 3u)) /* 3A threshold */
-                    {
+                        (ui16_adc_battery_current_filtered < 3u)) {
                         soft_launch_active  = 1u;
                         soft_launch_counter = 0u;
                     }
                 } else {
-                    /* Raise a soft duty ceiling slowly while waiting for load to appear */
                     uint8_t soft_ceiling = (uint8_t)(PWM_DUTY_CYCLE_STARTUP / 2u);
-                    /* The ramp time is controlled by ui8_smooth_start_counter_set from the display */
-                    uint16_t ramp_ticks = (uint16_t)ui8_smooth_start_counter_set * 4; /* 25ms per step -> 100ms per count */
-                    if (ramp_ticks == 0) ramp_ticks = 1; /* Avoid division by zero */
+                    uint16_t ramp_ticks  = (uint16_t)ui8_smooth_start_counter_set * 4u; // 25ms*4
+                    if (ramp_ticks == 0u) ramp_ticks = 1u;
 
-                    soft_ceiling = (uint8_t)(soft_ceiling + (uint8_t)(((uint32_t)soft_launch_counter * (uint32_t)(80u - (PWM_DUTY_CYCLE_STARTUP / 2u))) / ramp_ticks));
+                    soft_ceiling = (uint8_t)(soft_ceiling +
+                        (uint8_t)(((uint32_t)soft_launch_counter * (uint32_t)(80u - (PWM_DUTY_CYCLE_STARTUP / 2u))) / ramp_ticks));
 
                     if (soft_ceiling > 80u) soft_ceiling = 80u;
+                    if (target_for_ramp > soft_ceiling) target_for_ramp = soft_ceiling;
 
-                    if (target_for_ramp > soft_ceiling)
-                        target_for_ramp = soft_ceiling;
-
-                    /* keep time and exit when load shows up or we time out */
                     soft_launch_counter++;
-                    if ((ui16_adc_battery_current_filtered >= 3u) || /* 3A threshold */
-                        (soft_launch_counter >= ramp_ticks))
-                    {
+                    if ((ui16_adc_battery_current_filtered >= 3u) || (soft_launch_counter >= ramp_ticks)) {
                         soft_launch_active = 0u;
                     }
                 }
             }
 
-            /* Direction flags (no stdbool) */
+            const uint8_t FAST_GAP_UP    = 16u;
+            const uint8_t MED_GAP_UP     = 8u;
+            const uint8_t STEP_UP_FAST   = 4u;
+            const uint8_t STEP_UP_MED    = 2u;
+            const uint8_t STEP_UP_SLOW   = 1u;
+            const uint8_t STEP_DOWN_FAST = 2u;
+            const uint8_t STEP_DOWN_SLOW = 1u;
+
             uint8_t must_ramp_down = 0u;
             uint8_t can_ramp_up    = 0u;
 
-            if ((target_for_ramp < ui8_g_duty_cycle) ||                                          /* target < actual */
-                (ui16_controller_adc_battery_current_target < ui16_adc_battery_current_filtered) || /* requested Ibat < measured */
-                (ui16_adc_motor_phase_current > ui16_adc_motor_phase_current_max) ||             /* phase over limit */
-                /* (ui16_hall_counter_total < (HALL_COUNTER_FREQ / MOTOR_OVER_SPEED_ERPS)) || */ /* overspeed (disabled) */
-                (ui16_adc_voltage < ui16_adc_voltage_cut_off) ||                                 /* undervoltage */
-                (ui8_brake_state != 0))
-            {
+            if ((target_for_ramp < ui8_g_duty_cycle) ||
+                (ui16_controller_adc_battery_current_target < ui16_adc_battery_current_filtered) ||
+                (ui16_adc_motor_phase_current > ui16_adc_motor_phase_current_max) ||
+                (ui16_adc_voltage < ui16_adc_voltage_cut_off) ||
+                (ui8_brake_state != 0u)) {
                 must_ramp_down = 1u;
-            }
-            else if ((target_for_ramp > ui8_g_duty_cycle) &&
-                (ui16_controller_adc_battery_current_target > ui16_adc_battery_current_filtered))
-            {
+            } else if ((target_for_ramp > ui8_g_duty_cycle) &&
+                       (ui16_controller_adc_battery_current_target > ui16_adc_battery_current_filtered)) {
                 can_ramp_up = 1u;
             }
 
             if (must_ramp_down) {
-                ui8_counter_duty_cycle_ramp_up = 0;
+                ui8_counter_duty_cycle_ramp_up = 0u;
 
                 if (++ui8_counter_duty_cycle_ramp_down > ui8_controller_duty_cycle_ramp_down_inverse_step) {
-                    ui8_counter_duty_cycle_ramp_down = 0;
+                    ui8_counter_duty_cycle_ramp_down = 0u;
 
-                    /* FW first, then duty—keeps original behavior */
-                    if (ui8_fw_hall_counter_offset > 0) {
+                    if (ui8_fw_hall_counter_offset > 0u) {
                         ui8_fw_hall_counter_offset--;
-                    } else if (ui8_g_duty_cycle > 0) {
+                    } else if (ui8_g_duty_cycle > 0u) {
                         uint8_t step = STEP_DOWN_SLOW;
                         if ((ui8_g_duty_cycle > (uint8_t)(target_for_ramp + MED_GAP_UP)) ||
-                            (ui8_brake_state != 0) ||
-                            (ui16_adc_motor_phase_current > ui16_adc_motor_phase_current_max))
-                        {
+                            (ui8_brake_state != 0u) ||
+                            (ui16_adc_motor_phase_current > ui16_adc_motor_phase_current_max)) {
                             step = STEP_DOWN_FAST;
                         }
                         ui8_g_duty_cycle = (ui8_g_duty_cycle > step) ? (uint8_t)(ui8_g_duty_cycle - step) : 0u;
                     }
                 }
-            }
-            else if (can_ramp_up) {
-                ui8_counter_duty_cycle_ramp_down = 0;
+            } else if (can_ramp_up) {
+                ui8_counter_duty_cycle_ramp_down = 0u;
 
                 if (++ui8_counter_duty_cycle_ramp_up > ui8_controller_duty_cycle_ramp_up_inverse_step) {
-                    ui8_counter_duty_cycle_ramp_up = 0;
+                    ui8_counter_duty_cycle_ramp_up = 0u;
 
                     if (ui8_g_duty_cycle < PWM_DUTY_CYCLE_STARTUP) {
-                        ui8_g_duty_cycle = PWM_DUTY_CYCLE_STARTUP;  /* avoid sticky crawl */
+                        ui8_g_duty_cycle = PWM_DUTY_CYCLE_STARTUP;
                     } else if (ui8_g_duty_cycle < PWM_DUTY_CYCLE_MAX) {
                         uint8_t gap  = (uint8_t)(target_for_ramp - ui8_g_duty_cycle);
-                        uint8_t step;
-                        if (gap >= FAST_GAP_UP) {
-                            step = STEP_UP_FAST;
-                        } else if (gap >= MED_GAP_UP) {
-                            step = STEP_UP_MED;
-                        } else {
-                            step = STEP_UP_SLOW;
-                        }
+                        uint8_t step = (gap >= FAST_GAP_UP) ? STEP_UP_FAST :
+                                       (gap >= MED_GAP_UP)  ? STEP_UP_MED  : STEP_UP_SLOW;
 
                         uint16_t next = (uint16_t)ui8_g_duty_cycle + (uint16_t)step;
-                        if (next > target_for_ramp)     next = target_for_ramp;
-                        if (next > PWM_DUTY_CYCLE_MAX)  next = PWM_DUTY_CYCLE_MAX;
+                        if (next > target_for_ramp)    next = target_for_ramp;
+                        if (next > PWM_DUTY_CYCLE_MAX) next = PWM_DUTY_CYCLE_MAX;
                         ui8_g_duty_cycle = (uint8_t)next;
                     }
                 }
-            }
-            else if ((ui8_field_weakening_enabled != 0u) && (ui8_g_duty_cycle == PWM_DUTY_CYCLE_MAX)) {
-                /* No change needed on duty; allow FW to climb smoothly */
-                ui8_counter_duty_cycle_ramp_down = 0;
+            } else if ((ui8_field_weakening_enabled != 0u) && (ui8_g_duty_cycle == PWM_DUTY_CYCLE_MAX)) {
+                ui8_counter_duty_cycle_ramp_down = 0u;
                 if (++ui8_counter_duty_cycle_ramp_up > ui8_controller_duty_cycle_ramp_up_inverse_step) {
-                    ui8_counter_duty_cycle_ramp_up = 0;
+                    ui8_counter_duty_cycle_ramp_up = 0u;
                     if (ui8_fw_hall_counter_offset < ui8_fw_hall_counter_offset_max) {
                         ui8_fw_hall_counter_offset++;
                     }
                 }
-            }
-            else {
-                /* Target met; idle counters */
-                ui8_counter_duty_cycle_ramp_up   = 0;
-                ui8_counter_duty_cycle_ramp_down = 0;
+            } else {
+                ui8_counter_duty_cycle_ramp_up   = 0u;
+                ui8_counter_duty_cycle_ramp_down = 0u;
             }
         }
+
+        // Safety clamps (post decisions, pre PWM writeback)
+        if (ui8_g_foc_angle > 35u) ui8_g_foc_angle = 35u;
+        if ((ui16_motor_speed_erps < 3u) && (ui8_g_duty_cycle == 0u)) ui8_g_foc_angle = 0u;
+        if (ui8_g_duty_cycle > PWM_DUTY_CYCLE_MAX) ui8_g_duty_cycle = PWM_DUTY_CYCLE_MAX;
+        // ===== HAZZA_FOC_V3_AND_DUTY_END =====
 
     // to debug
     //uint16_t temp1e  =  XMC_CCU4_SLICE_GetTimerValue(HALL_SPEED_TIMER_HW);
