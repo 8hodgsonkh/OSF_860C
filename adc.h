@@ -3,6 +3,8 @@
 
 #include "cybsp.h"
 #include "cy_utils.h"
+#include <stdbool.h>
+#include <stdint.h>
 
 /*********************************************************************************************************************
  * HEADER FILES
@@ -171,6 +173,23 @@ void ADC_CFR_Init(void);
 
 void pmsm_foc_adc_gaincalib(void);
 void pmsm_foc_adc_startupcalibration(void);
+
+// --- Phase-current helpers for PWM ISR (two-sample + KCL path) ---
+// Maintain biases when electrically idle (duty==0 or motor disabled)
+void phase_bias_init_idle_sample(uint16_t raw_u, uint16_t raw_v, bool motor_electric_idle);
+
+// Return latest raw 12-bit samples (0..4095) for the two measured phases this PWM
+// U phase: Group-1, RES1 (alias1 -> IU)
+// V phase: Group-0, RES0 (alias0 -> IV)
+uint16_t adc_get_phase_u_raw_latest(void);
+uint16_t adc_get_phase_v_raw_latest(void);
+
+// Convert raw to signed counts around maintained bias
+int16_t adc_phase_u_counts_from_raw(uint16_t raw_u);
+int16_t adc_phase_v_counts_from_raw(uint16_t raw_v);
+
+// True if motor is electrically idle (no PWM or disabled)
+bool motor_electric_idle(void);
 
 
 #endif /* MCUINIT_ADC_H_ */

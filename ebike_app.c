@@ -234,6 +234,11 @@ int i32_adc_pedal_torque_delta_expo = 0;
 
 uint16_t ui16_adc_throttle;
 
+#if (TSDZ8_PHASE_FUSION)
+// Optional debug byte source from PWM ISR (rolling peak scaled to 8-bit)
+extern volatile uint8_t g_phase10_peak_byte;
+#endif
+
 // system functions
 static void get_battery_voltage(void);
 static void get_pedal_torque(void);
@@ -2729,6 +2734,12 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 			ui8_tx_buffer[26] = ui16_adc_battery_current_filtered;
 
 			ui8_len += 24;
+
+#if (TSDZ8_PHASE_FUSION && TSDZ8_APPEND_DEBUG_PERIODIC)
+			// Append 1 debug byte at the very end (index 27): rolling peak of phase current (8-bit)
+			ui8_tx_buffer[27] = g_phase10_peak_byte;
+			ui8_len += 1;
+#endif
 			break;
 
 			// set configurations

@@ -39,7 +39,7 @@
 #define DEFAULT_RAMP_UP_INVERSE_TESTING     194     // min = 24(=100% accel), default= 194 (=0% accel)
 #define DEFAULT_RAMP_DOWN_INVERSE_TESTING   73     // min = 9 (=100%decel), default = 73 (=0% decel)
 
-#define FOC_USE_NEW (1) //hazzafoc
+#define FOC_USE_NEW (0) //hazzafoc
 
 // here the 2 modes; note TESTING_MODE = allow e.g. to find best global offset angle or to run at a fixed duty cycle
 #define NORMAL_RUNNING_MODE 0     // motor run as usual
@@ -52,6 +52,24 @@
 #define uCPROBE_GUI_OSCILLOSCOPE MY_DISABLED // MY_ENABLED
 
 #define USE_IRQ_FOR_HALL (0) // 1 = use irq; 0 = use capture
+
+// ===========================
+// Phase current method toggle
+// ===========================
+#ifndef TSDZ8_PHASE_FUSION
+#define TSDZ8_PHASE_FUSION 1   // 1 = use KCL fusion (current_sense.c), 0 = legacy path
+#endif
+
+// Optional: enable fast VADC ISR update
+#ifndef TSDZ8_VADC_QUEUE_ISR
+#define TSDZ8_VADC_QUEUE_ISR 1
+#endif
+
+// Optional: append 1 debug byte to end of periodic frame (index 27)
+// Contains phase-current rolling peak in 8-bit (10-bit value >> 2)
+#ifndef TSDZ8_APPEND_DEBUG_PERIODIC
+#define TSDZ8_APPEND_DEBUG_PERIODIC 0
+#endif
 
 // note when USE_SPIDER_LOGIC_FOR_TORQUE > 0, KATANA logic is not used; to use KATANA, USE_SPIDER must be 0
 #define USE_SPIDER_LOGIC_FOR_TORQUE (0) // (1) = use Spider logic with a buffer of 20 value over one rotation.

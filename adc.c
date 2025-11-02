@@ -3,6 +3,8 @@
  * HEADER FILES
  ***************************************/
 #include "adc.h"
+#include "main.h"
+#include <stdbool.h>
 #include "xmc_vadc.h"
 
 //ADCType ADC;
@@ -488,6 +490,8 @@ VADC_G0->ALIAS = (((uint32_t)VADC_IDC_CHANNEL << VADC_G_ALIAS_ALIAS1_Pos) | VADC
   XMC_VADC_GLOBAL_BackgroundAddChannelToSequence(VADC,VADC_TORQUE_GROUP_NO,VADC_TORQUE_CHANNEL);
 
   XMC_VADC_GLOBAL_BackgroundTriggerConversion(VADC); // start a conversion in background (and so it will continue due to autoscan)
+
+
 }
 
 /*
@@ -638,6 +642,58 @@ void pmsm_foc_adc_gaincalib(void)
   VADC_G0->REFCLR = 1U;
   VADC_G0->ARBPR &= ~((uint32_t)VADC_G_ARBPR_ASEN2_Msk);
   #endif
+}
+
+
+
+
+
+
+// =========================
+// Phase-current helpers
+// =========================
+// Bias (12-bit ADC domain). Keep file scope static.
+static uint16_t s_bias_u = 2048;
+static uint16_t s_bias_v = 2048;
+
+// externs from existing modules
+extern volatile uint8_t ui8_g_duty_cycle; // motor.c
+extern uint8_t ui8_motor_enabled;         // ebike_app.c
+
+bool motor_electric_idle(void)
+{
+  return (ui8_g_duty_cycle == 0u) || (ui8_motor_enabled == 0u);
+}
+
+void phase_bias_init_idle_sample(uint16_t raw_u, uint16_t raw_v, bool motor_idle)
+{
+  if (!motor_idle) return;
+  // Tiny IIR toward observed raw values. alpha ~= 1/128
+  // Use integer arithmetic: x += (raw - x) / 128
+  s_bias_u = (uint16_t)(s_bias_u + (int32_t)((int32_t)raw_u - (int32_t)s_bias_u) / 128);
+  s_bias_v = (uint16_t)(s_bias_v + (int32_t)((int32_t)raw_v - (int32_t)s_bias_v) / 128);
+}
+
+uint16_t adc_get_phase_u_raw_latest(void)
+{
+  // Group-1, RES1 holds IU (alias1)
+  return (uint16_t)(XMC_VADC_GROUP_GetResult(VADC_I3_GROUP, VADC_I3_RESULT_REG) & 0x0FFFu);
+}
+
+uint16_t adc_get_phase_v_raw_latest(void)
+{
+  // Group-0, RES0 holds IV (alias0)
+  return (uint16_t)(XMC_VADC_GROUP_GetResult(VADC_I2_GROUP, VADC_I2_RESULT_REG) & 0x0FFFu);
+}
+
+int16_t adc_phase_u_counts_from_raw(uint16_t raw_u)
+{
+  return (int16_t)((int32_t)raw_u - (int32_t)s_bias_u);
+}
+
+int16_t adc_phase_v_counts_from_raw(uint16_t raw_v)
+{
+  return (int16_t)((int32_t)raw_v - (int32_t)s_bias_v);
 }
 
 

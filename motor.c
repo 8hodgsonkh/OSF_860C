@@ -14,6 +14,8 @@
 #include "SEGGER_RTT.h"
 #include "common.h"
 #include "adc.h"
+#include "main.h"
+#include "adc.h"
 #include <math.h>
 #include "cy_retarget_io.h"
 #include <stdint.h>
@@ -27,6 +29,29 @@
 
 
 //end of hazzas fun shit
+
+// Tiny integer sqrt for non-negative x (sufficient for current magnitude)
+static inline uint16_t isqrt_u32(uint32_t x) {
+    uint32_t op = x, res = 0, one = (uint32_t)1 << 30; // 2^30
+    while (one > op) one >>= 2;
+    while (one != 0) {
+        if (op >= res + one) { op -= res + one; res = (res >> 1) + one; }
+        else { res >>= 1; }
+        one >>= 2;
+    }
+    return (uint16_t)res;
+}
+
+// Map ADC counts magnitude (~0..4095) to legacy 10-bit units (~0..1023)
+static inline uint16_t counts_to_phase10(int32_t mag_counts) {
+    if (mag_counts <= 0) return 0;
+    const int32_t K = 39;   // prior calibration ballpark
+    const int32_t SHIFT = 11;
+    int32_t y = (mag_counts * K) >> SHIFT;
+    if (y < 0) y = 0;
+    if (y > 1023) y = 1023;
+    return (uint16_t)y;
+}
 // **************  to test slow rotation without using the hall sensor and so discover pattern sequence
 // just to test rotation at a low speed and low power to verify the the hall sequence is OK
 #define SPEED_COUNTER_MAX 19000 /360  // one electrical rotation per sec ; so 1 mecanical rotation takes 4 sec ; so 15 rpm
@@ -817,12 +842,31 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
         // foc_angle is added to the position given by hall sensor + interpolation )
         if (ui8_g_duty_cycle > 0) {
 
-            // --- calculate phase current ---
-            if (ui8_g_duty_cycle > 10) {
-                ui16_adc_motor_phase_current =
-                (uint16_t)(((uint32_t)ui16_adc_battery_current_filtered << 8) / ui8_g_duty_cycle);
+            // --- Two-phase sampling + KCL reconstruction (permanent path) ---
+
+            // 1) Grab raw U,V for this PWM period (latest completed conversions)
+            uint16_t raw_u = adc_get_phase_u_raw_latest();
+            uint16_t raw_v = adc_get_phase_v_raw_latest();
+
+            // Optional saturation guard: if ADC rails, skip update this cycle
+            if ((raw_u > 4087u) || (raw_u < 8u) || (raw_v > 4087u) || (raw_v < 8u)) {
+                // keep previous ui16_adc_motor_phase_current
             } else {
-                ui16_adc_motor_phase_current = ui16_adc_battery_current_filtered;
+                // 2) Maintain bias when electrically idle
+                phase_bias_init_idle_sample(raw_u, raw_v, motor_electric_idle());
+
+                // 3) Convert to signed counts and reconstruct third via KCL
+                int16_t iu = adc_phase_u_counts_from_raw(raw_u);
+                int16_t iv = adc_phase_v_counts_from_raw(raw_v);
+                int16_t iw = (int16_t)(-(int32_t)iu - (int32_t)iv);
+
+                // 4) Magnitude: |vector| ≈ sqrt((iu^2 + iv^2 + iw^2)/2)
+                int32_t iu32 = iu, iv32 = iv, iw32 = iw;
+                uint32_t s = (uint32_t)(iu32 * iu32 + iv32 * iv32 + iw32 * iw32);
+                uint16_t mag_counts = isqrt_u32(s >> 1);
+
+                // 5) Map to 10-bit legacy units and export
+                ui16_adc_motor_phase_current = counts_to_phase10((int32_t)mag_counts);
             }
 
             if (ui8_foc_flag) {  // once per electric rotation
