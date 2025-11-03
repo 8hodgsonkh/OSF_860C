@@ -36,15 +36,12 @@
             "type": "cortex-debug",
             "request": "launch",
             "cwd": "${workspaceFolder}",
-            "executable": "build/last_config/mtb-example-xmc-gpio-toggle.elf",
+            "executable": "build/tsdz8_for_GPIO_TEST/Debug/mtb-example-xmc-gpio-toggle.elf",
             "servertype": "jlink",
-            "device": "XMC1302-T038x0064",
+            "device": "XMC1302-0064",
             "interface": "swd",
             "serialNumber": "",
-            "preLaunchCommands": [
-                // Program via the hex file to get complete coverage
-                "exec-file build/last_config/mtb-example-xmc-gpio-toggle.hex"
-            ],
+            "serverArgs": ["-speed", "1000"],
             "overrideRestartCommands": [
                 "starti"
             ],
@@ -52,8 +49,11 @@
             "svdFile": "../mtb_shared/mtb-xmclib-cat3/release-v4.4.0/CMSIS/Infineon/SVD/XMC1300.svd",
             "breakAfterReset": true,
             "runToEntryPoint": "main",    // Specifies application entry point name where program will halt
-            "preLaunchTask": "Build", // Set this to run a task from tasks.json before
-                                                     // starting a debug session
+            "postStartSessionCommands": [
+                "monitor reset",
+                "monitor halt"
+            ],
+            "preLaunchTask": "Build", // Set this to run a task from tasks.json before starting a debug session
             "showDevDebugOutput": "none" 
         },
         // When using 'attach', make sure your program is running on the board and that your
@@ -64,11 +64,12 @@
             "type": "cortex-debug",
             "request": "attach",
             "cwd": "${workspaceFolder}",
-            "executable": "build/last_config/mtb-example-xmc-gpio-toggle.elf",
+            "executable": "build/tsdz8_for_GPIO_TEST/Debug/mtb-example-xmc-gpio-toggle.elf",
             "servertype": "jlink",
-            "device": "XMC1302-T038x0064",
+            "device": "XMC1302-0064",
             "interface": "swd",
             "serialNumber": "",
+            "serverArgs": ["-speed", "1000"],
             "overrideRestartCommands": [
                 "starti"
             ],
@@ -76,6 +77,11 @@
             "svdFile": "../mtb_shared/mtb-xmclib-cat3/release-v4.4.0/CMSIS/Infineon/SVD/XMC1300.svd",
             "breakAfterReset": true,
             "runToEntryPoint": "main",    // Specifies application entry point name for restart/reset
+            "postStartSessionCommands": [
+                "monitor reset",
+                "monitor halt"
+            ],
+            "preLaunchTask": "Build",
             "showDevDebugOutput": "none" 
         },
         {

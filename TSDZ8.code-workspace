@@ -8,6 +8,12 @@
         },
         {
             "path": "../shared_test"
+        },
+        {
+            "path": "../display_firmware"
+        },
+        {
+            "path": "../../../Color_LCD_860C/firmware/860C_850C"
         }
     ],
     "settings": {

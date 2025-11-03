@@ -108,7 +108,17 @@ VFP_SELECT=
 #
 # NOTE: Includes and defines should use the INCLUDES and DEFINES variable
 # above.
+# Keep debug info for J-Link, but we will override optimization later to -O3 via MTB_RECIPE_CFLAGS.
 CFLAGS=-gdwarf-3
+# High-performance build: override the recipe CFLAGS/LDFLAGS to force -O3 and enable LTO
+# while retaining all baseline toolchain flags (CPU, includes, sections, etc.).
+# This preserves the Debug output path while delivering release-like performance.
+#
+# GCC_ARM defaults (via recipe) add -Og for Debug; we filter it out and append -O3 and -flto.
+# Note: These variables are consumed in recipe_setup.mk after toolchain flags are defined.
+MTB_RECIPE_CFLAGS=$(CFLAGS) $(filter-out -Og -Os,$(MTB_TOOLCHAIN_$(TOOLCHAIN)__CFLAGS)) -O3 -flto -fdata-sections -ffunction-sections -fno-strict-aliasing -fshort-enums -fstack-usage -Wno-array-bounds
+# Linker flags: keep defaults, add -flto to enable link-time optimization and keep gc-sections.
+TB_RECIPE_LDFLAGS=$(LDFLAGS) $(MTB_TOOLCHAIN_$(TOOLCHAIN)__LDFLAGS) -flto -Wl,--gc-sections -Wl,--print-memory-usage -fuse-linker-plugin -Wl,-u,Reset_Handler
 # --- CMSIS-DSP include paths ---
 
 

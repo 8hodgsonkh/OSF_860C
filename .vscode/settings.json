@@ -10,10 +10,17 @@
     //mtb//      macOS  : $HOME/Library/Application Support/Code/User/settings.json
     //mtb//      Linux  : $HOME/.config/Code/User/settings.json
     //mtb//
-    "modustoolbox.toolsPath": "C:/Users/pc/ModusToolbox/tools_3.3",
-    "cortex-debug.armToolchainPath": "${config:modustoolbox.toolsPath}/gcc/bin",
-    "cortex-debug.openocdPath": "${config:modustoolbox.toolsPath}/openocd/bin/openocd.exe",
-    "cortex-debug.JLinkGDBServerPath.windows": "C:/Program Files/SEGGER/JLink/JLinkGDBServerCL.exe",
-    "cortex-debug.JLinkGDBServerPath.osx": "/Applications/SEGGER/JLink/JLinkGDBServerCLExe",
-    "cortex-debug.JLinkGDBServerPath.linux": "JLinkGDBServerCLExe"
+    // Override Windows tool paths for this Linux workspace
+    // If you have ModusToolbox toolchain on Linux, you can set it here, e.g.:
+    // "modustoolbox.toolsPath": "/home/haz/ModusToolbox/tools_3.3",
+
+    // Easiest: point Cortex-Debug directly at GDB on PATH
+    "cortex-debug.gdbPath": "arm-none-eabi-gdb",
+
+    // If you prefer armToolchainPath, set it to a folder containing bin/arm-none-eabi-gdb
+    // "cortex-debug.armToolchainPath": "/usr",
+
+    // Optional: if J-Link server is not on PATH, set the absolute path here
+    // Example: "/opt/SEGGER/JLink/JLinkGDBServerCLExe"
+    "cortex-debug.JLinkGDBServerPath": "JLinkGDBServerCLExe"
 }

@@ -586,8 +586,9 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 						ui8_duty_cycle_ramp_down_inverse_step = PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_MIN;
 					}
 
-					// set duty cycle ramp up in controller
-					ui8_controller_duty_cycle_ramp_up_inverse_step = ui8_duty_cycle_ramp_up_inverse_step;
+					// set duty cycle ramp up in controller, faster by ~30% (3->2, etc.)
+					ui8_controller_duty_cycle_ramp_up_inverse_step = (uint8_t)(((uint16_t)ui8_duty_cycle_ramp_up_inverse_step * 7u + 9u) / 10u);
+					if (ui8_controller_duty_cycle_ramp_up_inverse_step == 0u) ui8_controller_duty_cycle_ramp_up_inverse_step = 1u;
 
 					// set duty cycle ramp down in controller
 					ui8_controller_duty_cycle_ramp_down_inverse_step = ui8_duty_cycle_ramp_down_inverse_step;
@@ -1318,7 +1319,6 @@ static void apply_throttle(void)
 		{
 			uint16_t x = ui8_throttle_adc_in;
 			const uint16_t T = 77u;
-			if (x < 3u) x = 0u;
 			uint16_t y = (x <= T) ? (uint16_t)((x * x + (T >> 1)) / T) : x;
 			if (y > 255u) y = 255u;
 			ui8_throttle_adc_in = (uint8_t)y;
@@ -1366,8 +1366,8 @@ static void apply_throttle(void)
 		case THROTTLE_SEEK:
 			ui8_duty_cycle_target = PWM_DUTY_CYCLE_MAX;
 			ui16_adc_battery_current_target = 0u;
-			if (ui16_adc_battery_current_filtered > 9u) throttle_state = THROTTLE_ACTIVE; // ~1.5A
-			if (++seek_timeout_counter > 10u) throttle_state = THROTTLE_ACTIVE; // ~250ms
+			if (ui16_adc_battery_current_filtered > 6u) throttle_state = THROTTLE_ACTIVE; // earlier grab (~1.0A)
+			if (++seek_timeout_counter > 5u) throttle_state = THROTTLE_ACTIVE; // ~125ms
 			break;
 
 		case THROTTLE_ACTIVE:
