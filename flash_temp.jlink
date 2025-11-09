@@ -1,0 +1,7 @@
+device XMC1302-0200
+if SWD
+speed 4000
+loadfile /home/haz/Documents/tsdz8haztesting/860c/build/tsdz8_for_GPIO_TEST/Debug/mtb-example-xmc-gpio-toggle.hex
+r
+g
+exit

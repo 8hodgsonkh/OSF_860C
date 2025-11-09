@@ -100,3 +100,9 @@ void update_foc_optimiser(void);
 
 void run_adc_bias_calibration(void);
 
+// === HAZZA_TELEM_BEGIN ===
+// Telemetry: measured phase current for display (unclamped) and validity flag
+extern volatile uint16_t ui16_phase10_meas_uncapped;  // 0..1023, raw measured (post-scale)
+extern volatile uint8_t  g_phase_sample_valid;        // 0/1: last ISR update valid
+// === HAZZA_TELEM_END ===
+

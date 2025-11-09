@@ -127,6 +127,10 @@ uint8_t ui8_foc_angle_multiplicator = 0;
 uint16_t ui16_adc_battery_current_acc_X4 = 0;
 uint16_t ui16_adc_battery_current_filtered_X4 = 0;
 volatile uint16_t ui16_adc_motor_phase_current = 0; // mstrens: it was uint8 in original code
+// === HAZZA_TELEM_BEGIN ===
+volatile uint16_t ui16_phase10_meas_uncapped = 0;
+volatile uint8_t  g_phase_sample_valid = 0;
+// === HAZZA_TELEM_END ===
 
 // ADC Values
 volatile uint16_t ui16_adc_voltage = 0;
@@ -839,6 +843,7 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
             // Optional saturation guard: if ADC rails, skip update this cycle
             if ((raw_u > 4087u) || (raw_u < 8u) || (raw_v > 4087u) || (raw_v < 8u)) {
                 // keep previous ui16_adc_motor_phase_current
+                g_phase_sample_valid = 0u; // invalid sample this cycle
             } else {
                 // 2) Maintain bias when electrically idle
                 phase_bias_init_idle_sample(raw_u, raw_v, motor_electric_idle());
@@ -853,9 +858,16 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
                 uint32_t s = (uint32_t)(iu32 * iu32 + iv32 * iv32 + iw32 * iw32);
                 uint16_t mag_counts = isqrt_u32(s >> 1);
 
-                // 5) Map to 10-bit legacy units and export
-                ui16_adc_motor_phase_current = counts_to_phase10((int32_t)mag_counts);
-                // Sanity clamp: never exceed configured phase current ceiling
+                // 5) Map to 10-bit legacy units
+                uint16_t phase10_meas = counts_to_phase10((int32_t)mag_counts);
+                if (phase10_meas > 1023u) phase10_meas = 1023u; // domain cap
+
+                // Telemetry: store measured, unclamped
+                ui16_phase10_meas_uncapped = phase10_meas;
+                g_phase_sample_valid = 1u;
+
+                // Control path: apply clamp for protections
+                ui16_adc_motor_phase_current = phase10_meas;
                 if (ui16_adc_motor_phase_current > ui16_adc_motor_phase_current_max) {
                     ui16_adc_motor_phase_current = ui16_adc_motor_phase_current_max;
                 }
@@ -1209,24 +1221,25 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
     temp1 = temp1 - start_ticks;
     if (irq1_min > temp1) irq1_min = temp1; // store the min enlased time in the irq
     if (irq1_max < temp1) irq1_max = temp1; // store the min enlased time in the irq
+        {
+            // ===== HAZZA_PHASE10_SELECT_BEGIN =====
+            /* Keep measured for control unless truly invalid or idle; then fallback to estimate. */
+            if ((g_phase_sample_valid == 0u) || (ui8_g_duty_cycle == 0u)) {
+                uint16_t phase10_est;
+                if (ui8_g_duty_cycle > 10u) {
+                    /* Legacy estimate: phase ≈ Ibat * 255 / duty (scaled into same 10-bit units) */
+                    phase10_est = (uint16_t)(((uint32_t)ui16_adc_battery_current_filtered << 8) / (uint32_t)ui8_g_duty_cycle);
+                } else {
+                    phase10_est = ui16_adc_battery_current_filtered;
+                }
+                if (phase10_est > 1023u) phase10_est = 1023u;
+                ui16_adc_motor_phase_current = (phase10_est > ui16_adc_motor_phase_current_max)
+                    ? ui16_adc_motor_phase_current_max
+                    : phase10_est;
+            }
+            // ===== HAZZA_PHASE10_SELECT_END =====
+        }
     #endif
-    
-    // added by mstrens to calculate torque sensor without cyclic effect using the max per current and previous rotation
-    // note this code is used only when we do not use SPIDER or katana(1or 2) logic.
-    // So, it could probably be removed as this logic does not seems the best one.
-    // we have several data
-    // ui16_adc_torque_filtered is the actual filtered ADC torque
-    // ui16_adc_torque_actual_rotation is the max during current rotation
-    // ui16_adc_torque_previous_rotation is the max during previous rotation
-    // ui8_pas_counter count the number of transition to detect a 360° pedal rotation
-
-    // first reset the values per rotation when requested by ebike_app.c (because cadence is lower than a threshold)
-    if (ui8_adc_torque_rotation_reset) {
-        ui8_adc_torque_rotation_reset = 0; //reset the flag
-        ui16_adc_torque_actual_rotation = 0;  
-        ui16_adc_torque_previous_rotation = 0;
-        ui8_pas_counter = 0; // reset the counter also
-    }
     if (ui16_cadence_sensor_ticks > 0) { // when we have a cadence, we update data over rotation
         // actual_rotation is the max
         if (ui16_adc_torque_actual_rotation < ui16_adc_torque_filtered) ui16_adc_torque_actual_rotation = ui16_adc_torque_filtered;

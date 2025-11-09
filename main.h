@@ -71,6 +71,12 @@
 #define TSDZ8_APPEND_DEBUG_PERIODIC 0
 #endif
 
+// (reverted) calibrated phase current feature flags and constants removed
+
+// Optional: transmit calibrated instantaneous phase current (A*100) in periodic frame.
+// Adds 2 bytes after legacy payload (or after debug byte if appended).
+// removed: TSDZ8_SEND_PHASE_CURRENT_X100 flag (reverted)
+
 // note when USE_SPIDER_LOGIC_FOR_TORQUE > 0, KATANA logic is not used; to use KATANA, USE_SPIDER must be 0
 #define USE_SPIDER_LOGIC_FOR_TORQUE (0) // (1) = use Spider logic with a buffer of 20 value over one rotation.
                                         // (2) = mstrens variant using "expected" concept + smoothing

@@ -1,0 +1,500 @@
+ok back to motor firmware
+/* ============================================================
+HAZZA REAL FOC – compile-time switch and full implementation
+Files to add:
+fw/foc.h, fw/foc.c
+fw/observer.h, fw/observer.c
+fw/svpwm.h, fw/svpwm.c
+Touch points:
+fw/config.h, fw/motor.c, fw/pwm.c, fw/adc.c, fw/sensors.c
+Target: TSDZ8-class mid-drive, 4 pole pairs, halls + PLL observer
+============================================================ */
+
+// ---------- config.h ----------
+#pragma once
+
+// Enable Hazza's full FOC path (undef to revert to legacy control)
+#define HAZZA_REAL_FOC 1
+
+// PWM base frequency (timer center-aligned). Set to your real value.
+#define PWM_FREQ_HZ 30000.0f
+// ADC sample point is mid-cycle; fast ISR runs once per PWM period.
+#define FAST_ISR_HZ PWM_FREQ_HZ
+#define DT_FAST (1.0f/FAST_ISR_HZ)
+
+// Optional: mild over-modulation
+#define FOC_OVERMOD_FACTOR 1.05f
+
+// ---------- foc.h ----------
+#pragma once
+#include <stdint.h>
+
+typedef struct {
+float rs; // stator resistance [ohm]
+float ld; // d-axis inductance [H]
+float lq; // q-axis inductance [H]
+float lambda; // flux linkage [Wb]
+float pole_pairs; // e.g. 4
+} foc_motor_const_t;
+
+typedef struct {
+// PI gains (if 0, foc_init() will auto-compute from R,L and PWM)
+float kp_d, ki_d, kp_q, ki_q;
+// limits & modulation
+float i_phase_max; // A (peak per phase)
+float v_mod_max; // 0..~1.1 (allow 1.05 for mild overmod)
+// ramps / startup
+float iq_rate_a_per_s; // A/s
+float iq_preload; // A applied at standstill for clutch take-up
+// hall→observer handover
+float sensorless_handover_erpm;
+} foc_tune_t;
+
+typedef struct {
+float id_cmd, iq_cmd; // commanded currents
+float id_meas, iq_meas; // measured currents
+float elec_angle; // electrical angle [rad]
+float elec_omega; // electrical speed [rad/s]
+float mech_rpm; // mechanical RPM
+float v_mod; // modulation usage 0..1+
+uint8_t using_halls; // 1 if halls, 0 if observer
+} foc_state_t;
+
+void foc_init(const foc_motor_const_t *mc, const foc_tune_t *tc);
+void foc_set_enable(int en);
+void foc_set_iq_target(float iq_target_a);
+void foc_fast_isr(float ia, float ib, float vbus,
+float *duty_u, float *duty_v, float *duty_w);
+foc_state_t foc_get_state(void);
+
+// ---------- observer.h ----------
+#pragma once
+typedef struct {
+float kp, ki; // PLL gains
+float min_erpm_for_obs; // below this, prefer halls
+} observer_cfg_t;
+
+void observer_init(const foc_motor_const_t *mc, const observer_cfg_t *ocfg);
+float observer_step(float v_alpha, float v_beta,
+float i_alpha, float i_beta,
+float dt, float *omega_el);
+
+// ---------- svpwm.h ----------
+#pragma once
+void svpwm_compute(float v_alpha, float v_beta, float vbus,
+float overmod, float *du, float *dv, float *dw);
+
+// ---------- foc.c ----------
+#include "foc.h"
+#include "observer.h"
+#include "svpwm.h"
+#include <math.h>
+#include <float.h>
+
+static foc_motor_const_t g_mc;
+static foc_tune_t g_tc;
+static foc_state_t g_st;
+
+static float g_iq_target = 0.0f;
+static int g_enabled = 0;
+
+// PI helpers
+typedef struct { float kp, ki, i; float out_min, out_max; } pi_t;
+static inline float pi_step(pi_t p, float err, float dt) {
+float u = p->kperr + p->i;
+// clamp before integral anti-windup
+if (u > p->out_max) u = p->out_max;
+if (u < p->out_min) u = p->out_min;
+// integral update (back-calc)
+p->i += p->ki * err * dt;
+if (p->i > p->out_max) p->i = p->out_max;
+if (p->i < p->out_min) p->i = p->out_min;
+return u;
+}
+static pi_t pi_d, pi_q;
+
+static void auto_pi_from_RL(float rs, float ld, float lq, float pwm_hz,
+float *kp_d, float *ki_d, float *kp_q, float *ki_q) {
+// bandwidth ≈ pwm/10 (safe for high L motor), continuous-time PI
+const float bw = (pwm_hz * 0.1f) * 2.0f * (float)M_PI; // rad/s
+*kp_d = ld * bw;
+*ki_d = rs * bw;
+*kp_q = lq * bw;
+*ki_q = rs * bw;
+}
+
+void foc_init(const foc_motor_const_t *mc, const foc_tune_t *tc) {
+g_mc = *mc;
+g_tc = *tc;
+// Auto compute PI if zeros provided
+if (g_tc.kp_d == 0 || g_tc.ki_d == 0 || g_tc.kp_q == 0 || g_tc.ki_q == 0) {
+auto_pi_from_RL(g_mc.rs, g_mc.ld, g_mc.lq, PWM_FREQ_HZ,
+&g_tc.kp_d, &g_tc.ki_d, &g_tc.kp_q, &g_tc.ki_q);
+}
+
+pi_d = (pi_t){ .kp=g_tc.kp_d, .ki=g_tc.ki_d, .i=0,
+.out_min=-FLT_MAX, .out_max=FLT_MAX };
+pi_q = (pi_t){ .kp=g_tc.kp_q, .ki=g_tc.ki_q, .i=0,
+.out_min=-FLT_MAX, .out_max=FLT_MAX };
+
+g_st = (foc_state_t){0};
+g_st.using_halls = 1;
+}
+
+void foc_set_enable(int en){ g_enabled = en; }
+void foc_set_iq_target(float iq){ g_iq_target = iq; }
+
+// external hall utilities (to be provided by sensors.c)
+extern int halls_valid(void);
+extern float halls_interp_angle_rad(void);
+extern float get_erpm(void);
+
+// transforms
+static inline void clarke(float ia, float ib, float *a, float *b) {
+*a = ia;
+b = (ia + 2.0fib) * (1.0f/ sqrtf(3.0f));
+}
+static inline void park(float a, float b, float s, float c, float d, float q) {
+d = ca + sb;
+q = -sa + cb;
+}
+static inline void inv_park(float d, float q, float s, float c, float a, float b) {
+a = cd - sq;
+b = sd + cq;
+}
+
+void foc_fast_isr(float ia, float ib, float vbus,
+float *duty_u, float *duty_v, float *duty_w)
+{
+if (!g_enabled) { *duty_u=*duty_v=*duty_w=0.5f; return; }
+
+// Simple Iq ramp & preload
+float iq_cmd = g_iq_target;
+float iq_step = g_tc.iq_rate_a_per_s * DT_FAST;
+static float iq_ref = 0.0f;
+// preload when very low ERPM:
+const float erpm = get_erpm();
+if (fabsf(erpm) < 50.0f) iq_ref = fmaxf(iq_ref, g_tc.iq_preload);
+// ramp
+if (iq_ref < iq_cmd) iq_ref = fminf(iq_ref + iq_step, iq_cmd);
+else if (iq_ref > iq_cmd) iq_ref = fmaxf(iq_ref - iq_step, iq_cmd);
+
+// Angle source: halls below handover, observer above
+float angle;
+static float omega_el = 0.0f;
+if (halls_valid() && fabsf(erpm) < g_tc.sensorless_handover_erpm) {
+angle = halls_interp_angle_rad(); g_st.using_halls = 1;
+} else {
+extern float observer_step(float v_alpha, float v_beta,
+float i_alpha, float i_beta,
+float dt, float *omega_el_out);
+// We’ll fill v_alpha/beta after dq PI; first estimate with last cycle values:
+angle = observer_step(0,0,0,0, DT_FAST, &omega_el); // PLL update will use last values internally
+g_st.using_halls = 0;
+}
+
+const float s = sinf(angle), c = cosf(angle);
+
+// Clarke
+float i_alpha, i_beta;
+clarke(ia, ib, &i_alpha, &i_beta);
+
+// Park
+float id, iq;
+park(i_alpha, i_beta, s, c, &id, &iq);
+g_st.id_meas = id; g_st.iq_meas = iq;
+
+// PI current control with cross-decoupling
+float err_d = 0.0f - id;
+float err_q = iq_ref - iq;
+
+// electrical speed estimate available from observer; safe default from ERPM:
+if (g_st.using_halls) omega_el = erpm * (2.0f * (float)M_PI / 60.0f);
+
+float vd = pi_step(&pi_d, err_d, DT_FAST) + ( omega_el * g_mc.lq * iq);
+float vq = pi_step(&pi_q, err_q, DT_FAST) + (-omega_el * g_mc.ld * id + omega_el * g_mc.lambda);
+
+// Back to alpha/beta, then SVPWM
+float v_alpha, v_beta;
+inv_park(vd, vq, s, c, &v_alpha, &v_beta);
+
+// Limit vector magnitude to available bus
+float v_lim = (g_tc.v_mod_max > 0 ? g_tc.v_mod_max : 1.0f) * (vbus / sqrtf(3.0f));
+float v_mag = sqrtf(v_alphav_alpha + v_betav_beta);
+if (v_mag > v_lim) {
+float scale = v_lim / (v_mag + 1e-9f);
+v_alpha *= scale; v_beta *= scale;
+}
+
+svpwm_compute(v_alpha, v_beta, vbus, FOC_OVERMOD_FACTOR, duty_u, duty_v, duty_w);
+
+g_st.v_mod = v_mag / (vbus / sqrtf(3.0f));
+g_st.elec_angle = angle;
+g_st.elec_omega = omega_el;
+g_st.id_cmd = 0.0f;
+g_st.iq_cmd = iq_ref;
+}
+
+// ---------- observer.c (sketch: PLL back-EMF like VESC) ----------
+#include "observer.h"
+#include "foc.h"
+#include <math.h>
+
+static foc_motor_const_t oc_mc;
+static observer_cfg_t oc_cfg;
+static float oc_angle = 0.0f;
+static float pll_i = 0.0f;
+
+void observer_init(const foc_motor_const_t *mc, const observer_cfg_t *cfg){
+oc_mc = *mc; oc_cfg = *cfg; oc_angle = 0.0f; pll_i = 0.0f;
+}
+
+// Minimal PLL observer (use VESC equations if available in your tree)
+float observer_step(float v_alpha, float v_beta,
+float i_alpha, float i_beta,
+float dt, float omega_el_out)
+{
+// back-EMF = v - Ri - L*di/dt (di/dt term omitted in this minimal sketch)
+float e_alpha = v_alpha - oc_mc.rs * i_alpha;
+float e_beta = v_beta - oc_mc.rs * i_beta;
+
+float angle_est = atan2f(e_beta, e_alpha);
+// PLL
+float err = atan2f(sinf(angle_est - oc_angle), cosf(angle_est - oc_angle));
+float omega = oc_cfg.kp * err + pll_i; // rad/s
+pll_i += oc_cfg.ki * err * dt;
+oc_angle += omega * dt;
+// wrap
+if (oc_angle > M_PI) oc_angle -= 2.0fM_PI;
+if (oc_angle < -M_PI) oc_angle += 2.0fM_PI;
+
+if (omega_el_out) *omega_el_out = omega;
+return oc_angle;
+}
+
+// ---------- svpwm.c (standard 3-phase, centered) ----------
+#include "svpwm.h"
+#include <math.h>
+
+void svpwm_compute(float v_alpha, float v_beta, float vbus,
+float overmod, float *du, float *dv, float *dw)
+{
+// Normalize to bus
+float k = 2.0f / vbus;
+float x = k * v_alpha;
+float y = k * (v_alpha * (-0.5f) + v_beta * (sqrtf(3.0f)/2.0f));
+float z = k * (v_alpha * (-0.5f) - v_beta * (sqrtf(3.0f)/2.0f));
+
+// Zero-sequence injection
+float v_min = fminf(x, fminf(y, z));
+float v_max = fmaxf(x, fmaxf(y, z));
+float v0 = -0.5f * (v_max + v_min);
+
+float ua = x + v0;
+float vb = y + v0;
+float wc = z + v0;
+
+// Over-mod clamp
+const float lim = 0.5f * (overmod > 0 ? overmod : 1.0f);
+if (ua > lim) ua = lim; if (ua < -lim) ua = -lim;
+if (vb > lim) vb = lim; if (vb < -lim) vb = -lim;
+if (wc > lim) wc = lim; if (wc < -lim) wc = -lim;
+
+*du = ua + 0.5f;
+*dv = vb + 0.5f;
+*dw = wc + 0.5f;
+}
+
+// ---------- motor.c integration snippet ----------
+#ifdef HAZZA_REAL_FOC
+#include "foc.h"
+#include "observer.h"
+
+// Latest detection values from user (TSDZ8)
+static const foc_motor_const_t MC = {
+.rs = 0.05170f,
+.ld = 211.11e-6f,
+.lq = 332.56e-6f,
+.lambda = 0.01325f,
+.pole_pairs = 4.0f
+};
+static foc_tune_t TC = {
+.kp_d = 0, .ki_d = 0, .kp_q = 0, .ki_q = 0, // let auto-tune fill from R,L
+.i_phase_max = 55.0f,
+.v_mod_max = FOC_OVERMOD_FACTOR,
+.iq_rate_a_per_s = 300.0f,
+.iq_preload = 0.06f,
+.sensorless_handover_erpm = 500.0f
+};
+
+void motor_init_foc(void){
+foc_init(&MC, &TC);
+observer_cfg_t oc = { .kp = 400.0f, .ki = 20000.0f, .min_erpm_for_obs = 300.0f };
+observer_init(&MC, &oc);
+foc_set_enable(1);
+}
+
+void motor_set_throttle(float amps){ // map ADC to phase current target (A)
+foc_set_iq_target(amps);
+}
+
+// In PWM/ADC fast ISR:
+void motor_fast_isr(float ia, float ib, float vbus){
+float du,dv,dw;
+foc_fast_isr(ia, ib, vbus, &du, &dv, &dw);
+pwm_apply_duties(du,dv,dw); // your timer write
+}
+#endif
+#
+#
+#/////////////////////////////////////////////////////////////////////////////
+#/////////////////////////////////////////////////////////////////////////////COPILOT: Make TX[20] show real measured phase current (no clamp, no fallback)
+
+Goal: Keep all safety/protection for control, but telemetry must show the true measured phase current.
+We will:
+
+Capture unclamped measured phase10 in a global.
+
+Only use fallback when samples are truly invalid.
+
+Compute TX[20] from the unclamped measured path.
+
+Do not change frame layout or display code.
+
+motor.h — export telemetry symbols
+Add externs (near other globals):
+
+// === HAZZA_TELEM_BEGIN ===
+extern volatile uint16_t ui16_phase10_meas_uncapped; // 0..1023, raw measured (post-scale), no control clamp
+extern volatile uint8_t g_phase_sample_valid; // 0/1: last ISR update produced a valid sample
+// === HAZZA_TELEM_END ===
+
+motor.c — define + fill telemetry, constrain control separately
+At file top (globals area):
+
+// === HAZZA_TELEM_BEGIN ===
+volatile uint16_t ui16_phase10_meas_uncapped = 0;
+volatile uint8_t g_phase_sample_valid = 0;
+// === HAZZA_TELEM_END ===
+
+Inside CCU80_1_IRQHandler (PWM “down” ISR), after you compute mag_counts and before any clamps/fallbacks:
+
+Find the block that does:
+
+ui16_adc_motor_phase_current = counts_to_phase10(mag_counts);
+
+Change to:
+
+// --- measured phase current (unclamped) for telemetry ---
+uint16_t phase10_meas = counts_to_phase10(mag_counts);
+if (phase10_meas > 1023u) phase10_meas = 1023u; // hard domain cap
+ui16_phase10_meas_uncapped = phase10_meas;
+
+// mark sample valid by default; will clear if rails/invalid
+g_phase_sample_valid = 1;
+
+// --- control path uses clamped value as before ---
+ui16_adc_motor_phase_current = phase10_meas;
+if (ui16_adc_motor_phase_current > ui16_adc_motor_phase_current_max) {
+ui16_adc_motor_phase_current = ui16_adc_motor_phase_current_max;
+}
+
+Now tighten the fallback. Find the legacy block that overwrites measured with battery-based estimate, usually like:
+
+if ((phase10_used == 0u) || (phase10_used > ui16_adc_motor_phase_current_max)) {
+if (ui8_g_duty_cycle > 10u) { ... } else { ... }
+}
+
+Replace with: only fallback if the sample was truly invalid (railed or duty==0). We already have a saturation guard earlier (raw <8 or >4087); set validity accordingly there:
+
+In the place where you skip update due to rails, add:
+
+g_phase_sample_valid = 0; // rail/invalid this cycle
+
+Replace the fallback block with:
+
+// Only fallback if sample invalid OR motor idle. Otherwise keep measured.
+if ((g_phase_sample_valid == 0u) || (ui8_g_duty_cycle == 0u)) {
+uint16_t phase10_est;
+if (ui8_g_duty_cycle > 10u) {
+phase10_est = (uint16_t)(((uint32_t)ui16_adc_battery_current_filtered << 8) / ui8_g_duty_cycle);
+} else {
+phase10_est = ui16_adc_battery_current_filtered;
+}
+if (phase10_est > 1023u) phase10_est = 1023u;
+
+
+}
+
+Net: control stays safe; telemetry is measured-only.
+
+ebike_app.c — compute TX[20] from measured (unclamped)
+Locate where we compute the “motor amps x5” (same spot as battery x5), e.g.:
+
+// was something like:
+ui16_motor_current_filtered_x5 = (ui16_adc_motor_phase_current * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) / 20;
+
+Change the source to the measured telemetry:
+
+// === HAZZA_TELEM_BEGIN ===
+// Use measured, unclamped phase10 for telemetry (still 0..1023 domain)
+extern volatile uint16_t ui16_phase10_meas_uncapped;
+ui16_motor_current_filtered_x5 = (uint16_t)(
+((uint32_t)ui16_phase10_meas_uncapped * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) / 20u
+);
+// === HAZZA_TELEM_END ===
+
+Keep the TX packing the same:
+
+ui8_tx_buffer[20] = (uint8_t)ui16_motor_current_filtered_x5; // unchanged index/width
+
+Sanity notes (no code needed)
+We did not change any frame indices or display code.
+
+Control path still uses ui16_adc_motor_phase_current with clamp → protections intact.
+
+Telemetry now reflects what the shunts see (subject to 0..1023 domain, not the phase limit).
+
+Build checks Copilot should run
+Clean build; no new warnings.
+
+Confirm symbols are linked (externs ok).
+
+Confirm TX[20] rises well beyond 15 A×5 on load if the bike is actually pulling it, regardless of display power-cap setting.
+
+End of task. Do not refactor unrelated code.
+////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
+       state.c             Be tolerant on startup: accept any valid frame as a sign the controller is alive
+					if (ui8_frame == FRAME_TYPE_ALIVE) {
+						g_motor_init_state = MOTOR_INIT_GET_MOTOR_FIRMWARE_VERSION;
+					} else if (ui8_frame == FRAME_TYPE_FIRMWARE_VERSION) {
+						// If we already got a FW_VERSION unsolicited, parse it immediately
+						process_frame = 1;
+					} else if (ui8_frame == FRAME_TYPE_STATUS || ui8_frame == FRAME_TYPE_PERIODIC) {
+						// We have comms; move forward to request firmware version explicitly
+						g_motor_init_state = MOTOR_INIT_GET_MOTOR_FIRMWARE_VERSION;
+					}
+          break;
+
+        ebikeapp.c  // ===== HAZZA_SPLASH_KICK_BEGIN =====
+	// Brute-force startup aid for displays that can hang on splash if they miss early frames.
+	// While motor init isn't OK yet, periodically push ALIVE, FW VERSION and STATUS
+	// even if we haven't received a request frame. Stops automatically after init.
+	{
+		static uint8_t kick_counter = 0;
+		if (ui8_m_motor_init_state != MOTOR_INIT_OK) {
+			// This function is called ~every 50 ms (twice per 100 ms loop), kick about every ~300 ms
+			if (++kick_counter >= 6) {
+				kick_counter = 0;
+				communications_process_packages(COMM_FRAME_TYPE_ALIVE);
+				communications_process_packages(COMM_FRAME_TYPE_FIRMWARE_VERSION);
+				communications_process_packages(COMM_FRAME_TYPE_STATUS);
+			}
+		}
+	}
+	// ===== HAZZA_SPLASH_KICK_END =====

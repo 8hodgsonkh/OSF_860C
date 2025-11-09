@@ -22,5 +22,6 @@
 
     // Optional: if J-Link server is not on PATH, set the absolute path here
     // Example: "/opt/SEGGER/JLink/JLinkGDBServerCLExe"
-    "cortex-debug.JLinkGDBServerPath": "JLinkGDBServerCLExe"
+    "cortex-debug.JLinkGDBServerPath": "JLinkGDBServerCLExe",
+    "idf.pythonInstallPath": "/usr/bin/python"
 }

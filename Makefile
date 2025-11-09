@@ -109,7 +109,7 @@ VFP_SELECT=
 # NOTE: Includes and defines should use the INCLUDES and DEFINES variable
 # above.
 # Keep debug info for J-Link, but we will override optimization later to -O3 via MTB_RECIPE_CFLAGS.
-CFLAGS=-gdwarf-3
+CFLAGS=-gdwarf-3 -O3 -flto -fdata-sections -ffunction-sections -fno-strict-aliasing -fshort-enums -fstack-usage -Wno-array-bounds
 # High-performance build: override the recipe CFLAGS/LDFLAGS to force -O3 and enable LTO
 # while retaining all baseline toolchain flags (CPU, includes, sections, etc.).
 # This preserves the Debug output path while delivering release-like performance.
@@ -135,7 +135,7 @@ CXXFLAGS=
 ASFLAGS=
 
 # Additional / custom linker flags.
-LDFLAGS=
+LDFLAGS= -flto -Wl,--gc-sections -Wl,--print-memory-usage -fuse-linker-plugin -Wl,-u,Reset_Handler
 
 # Additional / custom libraries to link in to the application.
 LDLIBS+= -lm
