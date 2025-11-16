@@ -33,15 +33,28 @@ static inline uint16_t isqrt_u32(uint32_t x) {
     return (uint16_t)res;
 }
 
-// Map ADC counts magnitude (~0..4095) to legacy 10-bit units (~0..1023)
-static inline uint16_t counts_to_phase10(int32_t mag_counts) {
+// Convert ADC magnitude counts (post bias subtraction) to legacy 10-bit “phase current”.
+// Physical model:
+//   Vshunt = I * Rshunt;  ADC_counts = (Vshunt * Gain / Vref) * 4096
+//   I = counts * Vref / (4096 * Rshunt * Gain)
+//   We output legacy 10-bit units scaled so that ~55A (full-scale with R=6mΩ, Gain=10, Vref=3.3V) -> 1023.
+//   amps_x100 = counts * (Vref_mV * 10000) / (4096 * R_mOhm * Gain_x100)
+//   phase10 = (amps_x100 * 1023) / 5500   (since 55.00A => 5500 x100)
+static inline uint16_t adcCounts_to_phase10(int32_t mag_counts) {
     if (mag_counts <= 0) return 0;
-    const int32_t K = 117;  // calibrated for R006 shunts, gain≈20, Vref=3.3V
-    const int32_t SHIFT = 11;
-    int32_t y = (mag_counts * K) >> SHIFT;
-    if (y < 0) y = 0;
-    if (y > 1023) y = 1023;
-    return (uint16_t)y;
+    const uint32_t vref_mV   = (uint32_t)TSDZ8_ADC_VREF_MV;          // 3300
+    const uint32_t r_mOhm    = (uint32_t)TSDZ8_PHASE_SHUNT_MOHM;     // 6
+    const uint32_t gain_x100 = (uint32_t)TSDZ8_PHASE_AMP_GAIN_X100;  // 1000 => 10×
+
+    // amps_x100 calculation (add half denom for rounding)
+    uint64_t num = (uint64_t)vref_mV * 10000ull;
+    uint64_t den = (uint64_t)4096u * (uint64_t)r_mOhm * (uint64_t)gain_x100;
+    uint64_t ax100 = ((uint64_t)(uint32_t)mag_counts * num + (den >> 1)) / den;
+
+    // Map 55.00A -> 1023
+    uint64_t phase10 = (ax100 * 1023ull + 2750ull) / 5500ull; // +2750 for rounding (half of 5500)
+    if (phase10 > 1023ull) phase10 = 1023ull;
+    return (uint16_t)phase10;
 }
 // **************  to test slow rotation without using the hall sensor and so discover pattern sequence
 // just to test rotation at a low speed and low power to verify the the hall sequence is OK
@@ -65,6 +78,20 @@ const uint8_t expected_pattern_table[8] = {
     4, // after 6 => 4
     1 // 7 should not happen 
 };
+
+#if USE_TEST5_HALL
+// Corrected expected-next table for gated path: 0 and 7 map to 0 (invalid)
+static const uint8_t expected_next_tbl[8] = {
+    0, /* 0 invalid */
+    3, /* 1 -> 3 */
+    6, /* 2 -> 6 */
+    2, /* 3 -> 2 */
+    5, /* 4 -> 5 */
+    1, /* 5 -> 1 */
+    4, /* 6 -> 4 */
+    0  /* 7 invalid */
+};
+#endif
 
 
 // copied from tsdz2
@@ -131,6 +158,10 @@ volatile uint16_t ui16_adc_motor_phase_current = 0; // mstrens: it was uint8 in 
 volatile uint16_t ui16_phase10_meas_uncapped = 0;
 volatile uint8_t  g_phase_sample_valid = 0;
 // === HAZZA_TELEM_END ===
+
+// Rail event counters (diagnostic only, no prints)
+static volatile uint32_t s_rail_u_count = 0;
+static volatile uint32_t s_rail_v_count = 0;
 
 // ADC Values
 volatile uint16_t ui16_adc_voltage = 0;
@@ -282,6 +313,11 @@ uint16_t previous_hall_pattern_change_ticks;  // save the ticks of last pattern 
 volatile uint16_t ticks_hall_pattern_irq_last = 0;
 volatile uint8_t current_hall_pattern_irq = 0;
 
+#if USE_TEST5_HALL
+// Mailbox instance (written in POSIF ISR, read in CCU80_0)
+volatile hall_mailbox_t g_hall_mb = {0u, 0u, 0u};
+#endif
+
 //uint32_t ui32_angle_per_tick_X16shift_new;
 //uint32_t ui32_ref_angle; 
 //uint32_t ui32_ref_angle_new ; // temporary calculation
@@ -348,13 +384,24 @@ void VADC0_G0_0_IRQHandler() {  // VADC is configured to compare the total curre
 #if (USE_IRQ_FOR_HALL == (1))
 // this irq callback occurs when posif detects a new pattern 
 __RAM_FUNC void POSIF0_0_IRQHandler(){
-//void POSIF0_0_IRQHandler(){
-        // Capture time stamp 
-    ticks_hall_pattern_irq_last = XMC_CCU4_SLICE_GetTimerValue(HALL_SPEED_TIMER_HW);
-    // capture hall pattern
-    current_hall_pattern_irq = XMC_GPIO_GetInput(IN_HALL0_PORT, IN_HALL0_PIN);// hall 0
-    current_hall_pattern_irq |=  XMC_GPIO_GetInput(IN_HALL1_PORT, IN_HALL1_PIN) << 1;
-    current_hall_pattern_irq |=  XMC_GPIO_GetInput(IN_HALL2_PORT, IN_HALL2_PIN) << 2;
+    // Capture timestamp and hall pattern as soon as possible
+    uint16_t tick = XMC_CCU4_SLICE_GetTimerValue(HALL_SPEED_TIMER_HW);
+    uint8_t pat  = XMC_GPIO_GetInput(IN_HALL0_PORT, IN_HALL0_PIN);
+    pat |= (uint8_t)(XMC_GPIO_GetInput(IN_HALL1_PORT, IN_HALL1_PIN) << 1);
+    pat |= (uint8_t)(XMC_GPIO_GetInput(IN_HALL2_PORT, IN_HALL2_PIN) << 2);
+
+    // Legacy globals (kept for existing path)
+    ticks_hall_pattern_irq_last = tick;
+    current_hall_pattern_irq    = pat;
+
+    // Gated mailbox update (if enabled)
+    #if USE_TEST5_HALL
+    // Single-writer context: ISR. Bump seq last to first to reduce reader race window.
+    uint8_t next_seq = (uint8_t)(g_hall_mb.seq + 1u);
+    g_hall_mb.seq    = next_seq;     // publish: new event incoming
+    g_hall_mb.tick   = tick;
+    g_hall_mb.pattern= pat;
+    #endif
 }
 #endif
 
@@ -450,10 +497,26 @@ __RAM_FUNC void CCU80_0_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
     uint32_t critical_section_value = XMC_EnterCriticalSection();
     // get the current ticks
     uint16_t current_speed_timer_ticks = (uint16_t) (XMC_CCU4_SLICE_GetTimerValue(HALL_SPEED_TIMER_HW) );
+    // Drain latest Hall edge info
+    #if USE_TEST5_HALL
+    static uint8_t s_mb_seq_last = 0u;
+    uint16_t last_hall_pattern_change_ticks;
+    uint8_t  mb_seq = g_hall_mb.seq;
+    if (mb_seq != s_mb_seq_last) {
+        s_mb_seq_last = mb_seq;
+        last_hall_pattern_change_ticks = g_hall_mb.tick;
+        current_hall_pattern = g_hall_mb.pattern;
+    } else {
+        // Fallback to legacy cached values when no new hall edge
+        last_hall_pattern_change_ticks = ticks_hall_pattern_irq_last;
+        current_hall_pattern = current_hall_pattern_irq;
+    }
+    #else
     // get the last changed pattern ticks (from posif irq)
     uint16_t last_hall_pattern_change_ticks = ticks_hall_pattern_irq_last;
-    // get the current hall pattern as saved duting the posif irq
+    // get the current hall pattern as saved during the posif irq
     current_hall_pattern = current_hall_pattern_irq;
+    #endif
     XMC_ExitCriticalSection(critical_section_value);
 #else // irq0 when using a XMC_CCU4_SLICE_CAPTURE
     // get the current ticks
@@ -539,7 +602,12 @@ __RAM_FUNC void CCU80_0_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
     //I_t = ui32_adc_battery_current_15b >> 3; 
     // when pattern change
     if ( current_hall_pattern != previous_hall_pattern) {
-        if (current_hall_pattern != expected_pattern_table[previous_hall_pattern]){ // new pattern is not the expected one
+        #if USE_TEST5_HALL
+        uint8_t expected_next = expected_next_tbl[previous_hall_pattern & 0x07u];
+        #else
+        uint8_t expected_next = expected_pattern_table[previous_hall_pattern & 0x07u];
+        #endif
+        if (current_hall_pattern != expected_next){ // new pattern is not the expected one
             ui8_motor_commutation_type = BLOCK_COMMUTATION; // 0x00
             ui8_hall_360_ref_valid = 0;  // reset the indicator saying no error for a 360° electric rotation 
             ui32_angle_per_tick_X16shift = 0; // 0 means unvalid value
@@ -665,7 +733,7 @@ __RAM_FUNC void CCU80_0_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
     
 
     } else { // no hall patern change
-        // Verify if rotor stopped (< 10 ERPS)
+        // Verify if rotor stopped (< min ERPS configured)
         if (enlapsed_time > (HALL_COUNTER_FREQ/MOTOR_ROTOR_INTERPOLATION_MIN_ERPS/6)) { //  for TSDZ2: 250000/10 /6 = 4166 ; for TSDZ8 = 8332
             ui8_motor_commutation_type = BLOCK_COMMUTATION; // 0
             ui8_g_foc_angle = 0;
@@ -840,8 +908,10 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
             uint16_t raw_u = adc_get_phase_u_raw_latest();
             uint16_t raw_v = adc_get_phase_v_raw_latest();
 
-            // Optional saturation guard: if ADC rails, skip update this cycle
+            // Optional saturation guard: if ADC rails, skip update this cycle and bump counters
             if ((raw_u > 4087u) || (raw_u < 8u) || (raw_v > 4087u) || (raw_v < 8u)) {
+                if ((raw_u > 4087u) || (raw_u < 8u)) { s_rail_u_count++; }
+                if ((raw_v > 4087u) || (raw_v < 8u)) { s_rail_v_count++; }
                 // keep previous ui16_adc_motor_phase_current
                 g_phase_sample_valid = 0u; // invalid sample this cycle
             } else {
@@ -858,8 +928,8 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
                 uint32_t s = (uint32_t)(iu32 * iu32 + iv32 * iv32 + iw32 * iw32);
                 uint16_t mag_counts = isqrt_u32(s >> 1);
 
-                // 5) Map to 10-bit legacy units
-                uint16_t phase10_meas = counts_to_phase10((int32_t)mag_counts);
+                // 5) Map to calibrated 10-bit legacy units
+                uint16_t phase10_meas = adcCounts_to_phase10((int32_t)mag_counts);
                 if (phase10_meas > 1023u) phase10_meas = 1023u; // domain cap
 
                 // Telemetry: store measured, unclamped
@@ -897,24 +967,8 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
     
         // ===== HAZZA_FOC_V3_AND_DUTY_BEGIN =====
         // --- Phase current source select (measured shunt preferred, fallback to legacy est.)
-        {
-            // ===== HAZZA_PHASE10_SELECT_BEGIN =====
-            /* Prefer measured phase current (from PWM ISR). If invalid, fall back to legacy estimate from Ibat & duty. */
-            uint16_t phase10_meas = ui16_adc_motor_phase_current;   /* measured, 10-bit legacy units */
-            uint16_t phase10_used = phase10_meas;
-
-            /* Guard: treat 0 or obviously out-of-range as invalid */
-            if ((phase10_used == 0u) || (phase10_used > ui16_adc_motor_phase_current_max)) {
-                if (ui8_g_duty_cycle > 10u) {
-                    /* Legacy estimate: phase ≈ Ibat * 255 / duty (scaled into same 10-bit units) */
-                    phase10_used = (uint16_t)(((uint32_t)ui16_adc_battery_current_filtered << 8) / (uint32_t)ui8_g_duty_cycle);
-                } else {
-                    phase10_used = ui16_adc_battery_current_filtered;
-                }
-            }
-            ui16_adc_motor_phase_current = phase10_used;
-            // ===== HAZZA_PHASE10_SELECT_END =====
-        }
+        // Battery-current fallback removed: we now keep last valid measured phase current.
+        // If a sample rails, ui16_adc_motor_phase_current is left unchanged for that cycle.
 
         // --- Hazza FOC V3 with dynamic ceiling & bias curve (once per electrical rotation)
         if (ui8_g_duty_cycle > 0u) {
@@ -1221,24 +1275,7 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 840  c
     temp1 = temp1 - start_ticks;
     if (irq1_min > temp1) irq1_min = temp1; // store the min enlased time in the irq
     if (irq1_max < temp1) irq1_max = temp1; // store the min enlased time in the irq
-        {
-            // ===== HAZZA_PHASE10_SELECT_BEGIN =====
-            /* Keep measured for control unless truly invalid or idle; then fallback to estimate. */
-            if ((g_phase_sample_valid == 0u) || (ui8_g_duty_cycle == 0u)) {
-                uint16_t phase10_est;
-                if (ui8_g_duty_cycle > 10u) {
-                    /* Legacy estimate: phase ≈ Ibat * 255 / duty (scaled into same 10-bit units) */
-                    phase10_est = (uint16_t)(((uint32_t)ui16_adc_battery_current_filtered << 8) / (uint32_t)ui8_g_duty_cycle);
-                } else {
-                    phase10_est = ui16_adc_battery_current_filtered;
-                }
-                if (phase10_est > 1023u) phase10_est = 1023u;
-                ui16_adc_motor_phase_current = (phase10_est > ui16_adc_motor_phase_current_max)
-                    ? ui16_adc_motor_phase_current_max
-                    : phase10_est;
-            }
-            // ===== HAZZA_PHASE10_SELECT_END =====
-        }
+        // (Legacy estimate block deleted.)
     #endif
     if (ui16_cadence_sensor_ticks > 0) { // when we have a cadence, we update data over rotation
         // actual_rotation is the max

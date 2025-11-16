@@ -110,6 +110,24 @@ VFP_SELECT=
 # above.
 # Keep debug info for J-Link, but we will override optimization later to -O3 via MTB_RECIPE_CFLAGS.
 CFLAGS=-gdwarf-3 -O3 -flto -fdata-sections -ffunction-sections -fno-strict-aliasing -fshort-enums -fstack-usage -Wno-array-bounds
+
+# -----------------------------------------------------------------------------
+# Display backend abstraction (non-invasive)
+# DISPLAY_BACKEND values:
+#   0 -> 860C legacy inline logic (default / no-op shim)
+#   1 -> EKD01 plugin (UART frame packer)
+# Override at build: make DISPLAY_BACKEND=1
+# -----------------------------------------------------------------------------
+DISPLAY_BACKEND ?= 0
+# Defines must be placed in DEFINES (core-make enforces this). Provide selectable backend macro.
+DEFINES += DISPLAY_BACKEND=$(DISPLAY_BACKEND)
+
+# Explicitly add new backend sources (auto-discovery may miss nested paths)
+# Always build shim (no-op for 860C legacy path). Only build EKD01 backend when selected.
+SOURCES += src/display/display_backend_shim.c
+ifeq ($(DISPLAY_BACKEND),1)
+SOURCES += src/display/display_backend_ekd01.c
+endif
 # High-performance build: override the recipe CFLAGS/LDFLAGS to force -O3 and enable LTO
 # while retaining all baseline toolchain flags (CPU, includes, sections, etc.).
 # This preserves the Debug output path while delivering release-like performance.

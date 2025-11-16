@@ -12,13 +12,13 @@
 //#include "config.h"
 #include "common.h"
                                     // !!!!!!!!!!!!!!
-#define FIRMWARE_VERSION "0.1.36"      //  !!! this version was derived from 0.1.13 for vlcd5 !!!!!!!!!!
+#define FIRMWARE_VERSION "0.1.2"      //  !!! this version was derived from 0.1.13 for vlcd5 !!!!!!!!!!
 //#define MAIN_CONFIGURATOR_VERSION 2   // for configurator (must be the same as in xls sheet)
 //#define SUB_CONFIGURATOR_VERSION 1    // is not used (just for reference)
 
 
 // here some parameters for testing/debugging
-#define DEBUG_ON_JLINK         (0)  // when 1, messages are generated on jlink; best is to connect only 3 wires (grnd + SWO and S???)
+#define DEBUG_ON_JLINK         (1)  // enable J-Link debug helpers: RTT logs, WDT stop, SAFE_STOP timers
 
 #define USE_CONFIG_FROM_COMPILATION (0)  // this should normally be set on 0; Then values defined in configurator and stored in flash are applied
                                         // set to 1 only if you want to give priority to
@@ -42,8 +42,8 @@
 #define FOC_USE_NEW (0) //hazzafoc
 
 // here the 2 modes; note TESTING_MODE = allow e.g. to find best global offset angle or to run at a fixed duty cycle
-#define NORMAL_RUNNING_MODE 0     // motor run as usual
-#define TESTING_MODE 1    // motor is controlled by a few set up defined in uc_probe
+#define NORMAL_RUNNING_MODE 1     // motor run as usual
+#define TESTING_MODE 0    // motor is controlled by a few set up defined in uc_probe
 
 #define GENERATE_DATA_FOR_REGRESSION_ANGLES (0) // 1 to let irq0 generate intervals to apply regtression and calculate best angles
 
@@ -52,6 +52,13 @@
 #define uCPROBE_GUI_OSCILLOSCOPE MY_DISABLED // MY_ENABLED
 
 #define USE_IRQ_FOR_HALL (0) // 1 = use irq; 0 = use capture
+
+// === Hall subsystem experimental gate ===
+// Set USE_TEST5_HALL=1 to enable test5-style 1MHz Hall timebase and gated logic paths.
+// Default 0 keeps existing 250kHz legacy behavior.
+#ifndef USE_TEST5_HALL
+#define USE_TEST5_HALL 1
+#endif
 
 // ===========================
 // Phase current method toggle
@@ -69,6 +76,24 @@
 // Contains phase-current rolling peak in 8-bit (10-bit value >> 2)
 #ifndef TSDZ8_APPEND_DEBUG_PERIODIC
 #define TSDZ8_APPEND_DEBUG_PERIODIC 0
+#endif
+
+// =============================================================
+// Fatal error grace window configuration
+// -------------------------------------------------------------
+// Suppresses transmission and latching of ERROR_FATAL for a
+// short window after motor initialization completes. This lets
+// transient undervoltage / comm glitches during spin‑up settle
+// without freezing the display.
+// Adjust FATAL_GRACE_MS if needed; set FATAL_GRACE_ENABLE to 0
+// to disable feature completely.
+// =============================================================
+#ifndef FATAL_GRACE_ENABLE
+#define FATAL_GRACE_ENABLE 1
+#endif
+
+#ifndef FATAL_GRACE_MS
+#define FATAL_GRACE_MS 10000u  // 10 seconds
 #endif
 
 // (reverted) calibrated phase current feature flags and constants removed
@@ -104,8 +129,14 @@
 #define DEFAULT_HALL_REFERENCE_ANGLE 66
 //#define MID__RISING_FALLING_EDGE_HALL_SENSOR 5 // half difference between first and second 180 ticks interval 
 #define FINE_TUNE_ANGLE_OFFSET 0 // to change a little hall reference angle
-// for CCU4 slice 2
-#define HALL_COUNTER_FREQ                       250000U // 250KHz or 4us
+// for CCU4 slice 2 (Hall timing base)
+#ifndef HALL_COUNTER_FREQ
+#if USE_TEST5_HALL
+#define HALL_COUNTER_FREQ                       1000000U // 1 MHz (1us ticks) test5-style
+#else
+#define HALL_COUNTER_FREQ                       250000U  // 250 KHz (4us ticks) legacy
+#endif
+#endif
 
 #define PWM_DUTY_CYCLE_MAX                      254     
 #define PWM_DUTY_CYCLE_STARTUP	                30    // Initial PWM Duty Cycle at motor startup
@@ -383,6 +414,15 @@ HALL_COUNTER_OFFSET_UP:    29 -> 44
 
 // ADC battery current measurement
 #define BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100 15  // 0.15 A/step
+
+// Phase-current sense path (hardware constants)
+// FS current ≈ Vref / (Rshunt * Gain) ≈ 3.3V / (0.006Ω * 10) ≈ 55 A at ADC full-scale
+#undef TSDZ8_PHASE_SHUNT_MOHM
+#undef TSDZ8_PHASE_AMP_GAIN_X100
+#undef TSDZ8_ADC_VREF_MV
+#define TSDZ8_PHASE_SHUNT_MOHM    6      // 6 mΩ
+#define TSDZ8_PHASE_AMP_GAIN_X100 1000   // 10.00× (x100 scale)
+#define TSDZ8_ADC_VREF_MV         3300   // 3.3 V ADC reference
 
 // for oem display
 

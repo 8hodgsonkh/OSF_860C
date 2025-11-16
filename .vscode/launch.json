@@ -31,6 +31,9 @@
     //
     "version": "0.2.0",
     "configurations": [
+        
+
+
         {
             "name": "Launch (JLink)",
             "type": "cortex-debug",
@@ -47,7 +50,7 @@
             ],
             // svdFile is optional, it can be very large.
             "svdFile": "../mtb_shared/mtb-xmclib-cat3/release-v4.4.0/CMSIS/Infineon/SVD/XMC1300.svd",
-            "breakAfterReset": true,
+            "breakAfterReset": false,
             "runToEntryPoint": "main",    // Specifies application entry point name where program will halt
             "postStartSessionCommands": [
                 "monitor reset",

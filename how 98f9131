@@ -1,0 +1,39 @@
+[33m98f9131[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mtesting[m[33m)[m HEAD@{0}: checkout: moving from testing to testing
+[33m98f9131[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mtesting[m[33m)[m HEAD@{1}: checkout: moving from testing to testing
+[33m98f9131[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mtesting[m[33m)[m HEAD@{2}: commit: Phazeeeeee checkpoint
+[33m7192584[m[33m ([m[1;32mrescue-pre-surgery[m[33m)[m HEAD@{3}: reset: moving to 7192584
+[33m7192584[m[33m ([m[1;32mrescue-pre-surgery[m[33m)[m HEAD@{4}: checkout: moving from testing to testing
+[33m7192584[m[33m ([m[1;32mrescue-pre-surgery[m[33m)[m HEAD@{5}: reset: moving to HEAD
+[33m7192584[m[33m ([m[1;32mrescue-pre-surgery[m[33m)[m HEAD@{6}: commit: Tweaks made
+[33mdd9971d[m[33m ([m[1;32mphase-current-safe[m[33m)[m HEAD@{7}: commit: feat: finalize safe phase-current calibration and throttle responsiveness
+[33mdec7b11[m HEAD@{8}: commit: real phase amp calculations using phase shunts, 90% done but needs work. may be dangerous under load
+[33m5411039[m HEAD@{9}: commit: saving some files
+[33mbde9100[m HEAD@{10}: reset: moving to testing
+[33mbde9100[m HEAD@{11}: checkout: moving from testing to testing
+[33mbde9100[m HEAD@{12}: commit: feat: Advanced Motor Control & Throttle Refactor
+[33mb5aa947[m HEAD@{13}: commit: Stable baseline before next FOC experiments
+[33mdcf329e[m HEAD@{14}: commit: 🚀 Motor launch: yes. Rider launch: also yes.
+[33m73ecec7[m HEAD@{15}: commit: v3
+[33md3a1432[m HEAD@{16}: commit: v2.3
+[33m2592e27[m HEAD@{17}: checkout: moving from testing to testing
+[33m2592e27[m HEAD@{18}: commit: V2.1: throttle go burrrrr but broke PAS, fix attempted here
+[33m1092baa[m HEAD@{19}: commit: attempted to fix pas in v2.1
+[33m59fde06[m HEAD@{20}: commit: First test attempt for V2
+[33mee9064d[m HEAD@{21}: commit: WIP: force 30A + ui16 throttle mapping + widen targets
+[33m64b5c10[m HEAD@{22}: pull --rebase origin testing (finish): returning to refs/heads/testing
+[33m64b5c10[m HEAD@{23}: pull --rebase origin testing (pick): testing checkpoint
+[33m3432b25[m HEAD@{24}: pull --rebase origin testing (start): checkout 3432b25e6b1f4cd48b0301eea376601216ef473d
+[33m60374bf[m HEAD@{25}: commit: testing checkpoint
+[33m5382cce[m HEAD@{26}: reset: moving to HEAD
+[33m5382cce[m HEAD@{27}: commit: testing throttle shaping+amps only cap
+[33mdb08ecf[m[33m ([m[1;33mtag: [m[1;33mstable[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{28}: checkout: moving from main to testing
+[33mdb08ecf[m[33m ([m[1;33mtag: [m[1;33mstable[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{29}: reset: moving to origin/main
+[33mffd8c8c[m[33m ([m[1;34mgrafted[m[33m)[m HEAD@{30}: reset: moving to origin/main
+[33mffd8c8c[m[33m ([m[1;34mgrafted[m[33m)[m HEAD@{31}: checkout: moving from main to main
+[33mffd8c8c[m[33m ([m[1;34mgrafted[m[33m)[m HEAD@{32}: reset: moving to origin/main
+[33mffd8c8c[m[33m ([m[1;34mgrafted[m[33m)[m HEAD@{33}: checkout: moving from main to main
+[33mffd8c8c[m[33m ([m[1;34mgrafted[m[33m)[m HEAD@{34}: checkout: moving from main to main
+[33mffd8c8c[m[33m ([m[1;34mgrafted[m[33m)[m HEAD@{35}: reset: moving to origin/main
+[33mffd8c8c[m[33m ([m[1;34mgrafted[m[33m)[m HEAD@{36}: checkout: moving from main to main
+[33mffd8c8c[m[33m ([m[1;34mgrafted[m[33m)[m HEAD@{37}: checkout: moving from main to main
+[33mffd8c8c[m[33m ([m[1;34mgrafted[m[33m)[m HEAD@{38}: clone: from https://github.com/mstrens/OSF_860C.git

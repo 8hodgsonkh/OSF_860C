@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "../.."
+		},
+		{
+			"path": "../../../display_firmware"
+		},
+		{
+			"path": "../../../OSF"
+		}
+	],
+	"settings": {
+		"cortex-debug.gdbPath": "arm-none-eabi-gdb",
+		"cortex-debug.JLinkGDBServerPath": "JLinkGDBServerCLExe"
+	}
+}

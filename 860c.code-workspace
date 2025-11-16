@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../display_firmware"
+		}
+	],
+	"settings": {
+		"cortex-debug.gdbPath": "arm-none-eabi-gdb",
+		"cortex-debug.JLinkGDBServerPath": "JLinkGDBServerCLExe"
+	}
+}

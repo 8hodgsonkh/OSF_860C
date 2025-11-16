@@ -277,9 +277,34 @@ uint32_t ui32_battery_current_mA_avg = 0;
 
 uint32_t ui32_current_1_rotation_ma = 0; // average current over 1 electric rotation
 
+// -------------------------------------------------------------
+// Fatal grace window state
+// -------------------------------------------------------------
+// Controller millisecond accumulator (increments every ebike_app_controller call: 25ms per tick)
+static uint32_t g_controller_ms_accum = 0;
+// Timestamp (in controller ms) when motor init finished; 0 until set
+volatile uint32_t g_motor_init_done_ms = 0;
+// Diagnostic counter of suppressed fatal events during grace window
+uint8_t ui8_deferred_fatal_events = 0;
+
+// Helper: is grace window active?
+bool fatal_grace_active(void)
+{
+#if FATAL_GRACE_ENABLE
+	if (g_motor_init_done_ms == 0) { return false; } // not started yet
+	// Safe against wrap due to unsigned subtraction semantics
+	uint32_t delta = g_controller_ms_accum - g_motor_init_done_ms;
+	return (delta < (uint32_t)FATAL_GRACE_MS);
+#else
+	return false;
+#endif
+}
+
 
 void ebike_app_controller(void) // is called every 25ms by main()
 {
+	// Advance local ms accumulator (25ms per controller invocation)
+	g_controller_ms_accum += 25u;
 	// calculate motor ERPS = electrical rotation per sec ; ui16_hall_counter_total is the number of tick (4usec/tick) for a full electric rotation
 	// 0x8000 was the value for TSDZ2;
 	// TSDZ8 should test on a value that is 2 * because there is 4 poles instead of 8 and so it takes more ticks for the same mecanical speed
@@ -309,7 +334,9 @@ void ebike_app_controller(void) // is called every 25ms by main()
 	ui16_battery_current_filtered_x5 = (uint16_t)(((uint32_t) ui16_adc_battery_current_filtered * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) / 20);
 
 	// Calculate filtered Motor Current (Ampx5) from measured, unclamped phase current
-	ui16_motor_current_filtered_x5 = (uint16_t)(((uint16_t) ui16_phase10_meas_uncapped * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) / 20);
+	// Use clamped, calibrated phase current (ui16_adc_motor_phase_current) for display scaling.
+	// Legacy conversion: battery current step (0.15A) * 5 => divide by 20 to get A*5 units.
+	ui16_motor_current_filtered_x5 = (uint16_t)(((uint16_t) ui16_adc_motor_phase_current * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) / 20);
 
 	// get pedal torque ; calculate ui16_pedal_torque_x100 and ui16_human_power_x10 (human power)
 	get_pedal_torque();
@@ -475,6 +502,8 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 					ui8_m_motor_init_state = MOTOR_INIT_OK;
 					ui8_m_motor_init_status = MOTOR_INIT_STATUS_INIT_OK;
 					ui8_m_system_state &= ~ERROR_NOT_INIT;
+					// Capture grace window start timestamp
+					g_motor_init_done_ms = g_controller_ms_accum;
 				}
 				break;
 		}
@@ -482,7 +511,12 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 		// Check battery voltage if lower than shutdown value (safety)
 		if ((ui16_adc_voltage < ui16_adc_voltage_shutdown)
 			&&(ui8_m_motor_init_state == MOTOR_INIT_OK)) {
-			ui8_m_system_state |= ERROR_FATAL; // Undervoltage
+			// Suppress fatal latch during grace window; count deferrals
+			if (!fatal_grace_active()) {
+				ui8_m_system_state |= ERROR_FATAL; // Undervoltage
+			} else {
+				ui8_deferred_fatal_events++;
+			}
 			ui8_voltage_shutdown_flag = 1;
 			}
 
@@ -2454,7 +2488,12 @@ static void communications_controller(void)
 	if (ui8_comm_error_counter > 30) {
 		motor_disable_pwm();
 		ui8_motor_enabled = 0;
-		ui8_m_system_state |= ERROR_FATAL; // Comms failed
+		// Suppress fatal latch during grace window; count deferrals
+		if (!fatal_grace_active()) {
+			ui8_m_system_state |= ERROR_FATAL; // Comms failed
+		} else {
+			ui8_deferred_fatal_events++;
+		}
 	}
 
 	if (ui8_m_motor_init_state == MOTOR_INIT_STATE_RESET) {
@@ -2646,8 +2685,12 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 			ui8_tx_buffer[18] = ui8_g_foc_angle;
 
 
-			// system state
-			ui8_tx_buffer[19] = ui8_m_system_state;
+			// system state (mask fatal during grace window so display doesn't freeze)
+			uint8_t system_state_to_send = ui8_m_system_state;
+			if (fatal_grace_active()) {
+				system_state_to_send &= (uint8_t)~ERROR_FATAL;
+			}
+			ui8_tx_buffer[19] = system_state_to_send;
 
 			// send motor_current_x5
 			ui8_tx_buffer[20] = (uint8_t)(ui16_motor_current_filtered_x5);

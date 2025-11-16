@@ -185,6 +185,13 @@ static uint8_t ui8_smooth_start_counter = 0;
 static uint8_t ui8_smooth_start_counter_set = SMOOTH_START_RAMP_DEFAULT;
 static uint8_t ui8_smooth_start_counter_set_temp = SMOOTH_START_RAMP_DEFAULT;
 
+#if defined(DISPLAY_BACKEND) && (DISPLAY_BACKEND == 1)
+// EKD01 build: hold both off-road and street speed caps
+// Updated mapping: lights OFF => STREET (legal); lights ON => OFFROAD
+static uint8_t ui8_wheel_speed_max_offroad = 60; // default overridden by defaults apply
+static uint8_t ui8_street_mode_speed_kmh = 15;   // legal cap when lights OFF
+#endif
+
 // startup assist
 static uint8_t ui8_startup_assist_flag = 0;
 static uint8_t ui8_startup_assist_adc_battery_current_target = 0;
@@ -273,6 +280,58 @@ uint32_t ui32_battery_current_mA_avg = 0;
 
 
 uint32_t ui32_current_1_rotation_ma = 0; // average current over 1 electric rotation
+// ----------------------------------------------------------------------------
+// EKD01 defaults application (controller-side)
+// ----------------------------------------------------------------------------
+#if defined(DISPLAY_BACKEND) && (DISPLAY_BACKEND == 1)
+void ekd01_controller_apply_defaults(const ekd01_controller_defaults_t *d)
+{
+	if(!d) return;
+	// Geometry & speed caps
+	ui16_wheel_perimeter = d->wheel_perimeter_mm;
+	ui8_wheel_speed_max_offroad = d->wheel_speed_max_kmh;
+	ui8_street_mode_speed_kmh   = d->street_mode_speed_kmh;
+
+	// Battery & safety
+	ui16_battery_low_voltage_cut_off_x10 = d->battery_low_voltage_cut_off_x10;
+	ui8_battery_overcurrent_delay = d->battery_overcurrent_delay; // 0 disables
+
+	// Assist-level flags and riding mode
+	ui8_assist_level_flag = d->assist_level_flag;
+	ui8_riding_mode = d->riding_mode;
+	ui8_riding_mode_parameter = d->riding_mode_parameter;
+
+	// Smooth start
+	ui8_smooth_start_enabled = d->smooth_start_enabled;
+	ui8_smooth_start_counter_set = d->smooth_start_counter_set;
+
+	// Torque sensor tuning
+	ui8_adc_pedal_torque_range_adj = d->adc_pedal_torque_range_adj;
+	ui8_adc_pedal_torque_angle_adj = d->adc_pedal_torque_angle_adj;
+	ui8_pedal_torque_per_10_bit_ADC_step_x100 = d->pedal_torque_step_x100;
+
+	// Throttle calibration and gating
+	ui8_throttle_min = d->throttle_min;
+	ui8_throttle_max = d->throttle_max;
+	ui8_throttle_legal = d->throttle_legal;
+	// Keep feature enabled so EKD01 can use 6 km/h only with legal gating
+	ui8_throttle_feature_enabled = 1;
+
+	// Walk assist
+	ui8_walk_assist_parameter = d->walk_assist_parameter;
+
+	// Assist without pedal rotation
+	ui8_assist_without_pedal_rotation_enabled = d->assist_without_pedal_rotation_enabled;
+	ui8_assist_without_pedal_rotation_threshold = d->assist_without_pedal_rotation_threshold;
+
+	// eMTB / hybrid specifics
+	ui8_eMTB_based_on_power = d->eMTB_based_on_power;
+	ui8_hybrid_torque_parameter = d->hybrid_torque_parameter;
+
+	// Ensure speed simulation is off by default
+	ui8_wheel_speed_simulate = 0;
+}
+#endif
 
 
 void ebike_app_controller(void) // is called every 25ms by main()
@@ -303,7 +362,8 @@ void ebike_app_controller(void) // is called every 25ms by main()
 	
     
     // Calculate filtered Battery Current (Ampx5)
-    ui8_battery_current_filtered_x5 = (uint8_t)(((uint16_t) ui8_adc_battery_current_filtered * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) / 20);
+	// Replace deprecated 8-bit filtered current variable usage with 16-bit variant
+	ui8_battery_current_filtered_x5 = (uint8_t)(((uint16_t) ui16_adc_battery_current_filtered * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) / 20);
 	
 	// Calculate filtered Motor Current (Ampx5)
     ui8_motor_current_filtered_x5 = (uint8_t)(((uint16_t) ui16_adc_motor_phase_current * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) / 20);
@@ -382,7 +442,7 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 	// field weakening enable
 	if ((ui8_field_weakening_feature_enabled)
 		&& (ui16_motor_speed_erps > MOTOR_SPEED_FIELD_WEAKENING_MIN)
-		&& (ui8_adc_battery_current_filtered < ui8_controller_adc_battery_current_target)
+		&& (ui16_adc_battery_current_filtered < ui16_controller_adc_battery_current_target)
 		&& (!ui8_adc_throttle_assist)) {
 			ui8_field_weakening_erps_delta = ui16_motor_speed_erps - MOTOR_SPEED_FIELD_WEAKENING_MIN;
 			ui8_fw_hall_counter_offset_max = ui8_field_weakening_erps_delta >> 5;
@@ -533,7 +593,7 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 	// for debug
 	// calculate an average in mA (to find parameters giving lowest current)
 	//ui32_current_1_rotation_ma = (ui32_adc_battery_current_1_rotation_15b * 10 * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) >> 5;
-	ui32_current_1_rotation_ma = (ui8_adc_battery_current_filtered * 10 * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) ;
+	ui32_current_1_rotation_ma = (ui16_adc_battery_current_filtered * 10 * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) ;
 	
 	ui32_battery_current_mA_acc += ui32_current_1_rotation_ma;
 	ui32_battery_current_mA_cnt--;
@@ -556,7 +616,7 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 	  || ((ui8_m_system_state)&&(!ui8_assist_with_error_enabled))) {
         ui8_controller_duty_cycle_ramp_up_inverse_step = PWM_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_DEFAULT;
 		ui8_controller_duty_cycle_ramp_down_inverse_step = PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_MIN;
-		ui8_controller_adc_battery_current_target = 0;
+		ui16_controller_adc_battery_current_target = 0;
 		ui8_controller_duty_cycle_target = 0;
     }
 	else { // motor can run (no safety issue)
@@ -592,7 +652,7 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
         ui8_controller_duty_cycle_ramp_down_inverse_step = ui8_duty_cycle_ramp_down_inverse_step;
 
         // set target battery current in controller
-        ui8_controller_adc_battery_current_target = ui8_adc_battery_current_target;
+		ui16_controller_adc_battery_current_target = ui16_adc_battery_current_target;
 
         // set target duty cycle in controller
         ui8_controller_duty_cycle_target = ui8_duty_cycle_target;
@@ -1307,6 +1367,22 @@ static void apply_throttle(void)
 	ui16_adc_throttle = (XMC_VADC_GROUP_GetResult(vadc_0_group_1_HW , VADC_POT_RESULT_REG ) & 0x0FFF) >> 2;
 
 	if (ui8_throttle_feature_enabled) {
+#if defined(DISPLAY_BACKEND) && (DISPLAY_BACKEND == 1)
+		// Enforce legal throttle cap at ~6 km/h with small hysteresis on EKD01 builds.
+		// Updated mapping: Lights OFF => STREET (cap active); Lights ON => OFFROAD (disable cap).
+		static uint8_t s_throttle_speed_cap_active = 0; // 0=inactive, 1=active
+		const uint16_t cap_on_x10  = 62; // 6.2 km/h engage
+		const uint16_t cap_off_x10 = 58; // 5.8 km/h release
+		if (!ui8_lights_state) {
+			if (!s_throttle_speed_cap_active && ui16_wheel_speed_x10 >= cap_on_x10) {
+				s_throttle_speed_cap_active = 1;
+			} else if (s_throttle_speed_cap_active && ui16_wheel_speed_x10 <= cap_off_x10) {
+				s_throttle_speed_cap_active = 0;
+			}
+		} else {
+			s_throttle_speed_cap_active = 0; // off-road: cap disabled
+		}
+#endif
 		// map adc value from 0..255 using your Min/Max calibration
 		ui8_throttle_adc_in = map_ui8((uint8_t)(ui16_adc_throttle >> 2),
 									  ui8_throttle_min,
@@ -1348,7 +1424,14 @@ static void apply_throttle(void)
 		if ((ui8_throttle_legal)&&(!ui8_pedal_cadence_RPM)) {
 			ui8_adc_throttle_assist = 0;
 		}
-	
+        
+#if defined(DISPLAY_BACKEND) && (DISPLAY_BACKEND == 1)
+		// Apply throttle speed cap: if active, block throttle assist output
+		if (s_throttle_speed_cap_active) {
+			ui8_adc_throttle_assist = 0;
+		}
+#endif
+
 		if (ui8_adc_throttle_assist) {
 			// map ADC throttle value from 0 to max battery current
 			uint8_t ui8_adc_battery_current_target_throttle = map_ui8(ui8_adc_throttle_assist,
@@ -1423,9 +1506,16 @@ static void apply_temperature_limiting(void)
 
 static void apply_speed_limit(void)
 {
-    if (0 && ui8_wheel_speed_max > 0U) {
-		uint16_t speed_limit_low  = (uint16_t)((uint8_t)(ui8_wheel_speed_max - 2U) * (uint8_t)10U); // casting literal to uint8_t ensures usage of MUL X,A
-		uint16_t speed_limit_high = (uint16_t)((uint8_t)(ui8_wheel_speed_max + 2U) * (uint8_t)10U);
+	uint8_t effective_cap = 0;
+#if defined(DISPLAY_BACKEND) && (DISPLAY_BACKEND == 1)
+	// EKD01 updated: lights OFF => street (legal); ON => off-road
+	effective_cap = ui8_lights_state ? ui8_wheel_speed_max_offroad : ui8_street_mode_speed_kmh;
+#else
+	effective_cap = ui8_wheel_speed_max;
+#endif
+	if (effective_cap > 0U) {
+		uint16_t speed_limit_low  = (uint16_t)((uint8_t)(effective_cap - 2U) * (uint8_t)10U);
+		uint16_t speed_limit_high = (uint16_t)((uint8_t)(effective_cap + 2U) * (uint8_t)10U);
 		
 		ui8_speed_limit_high_exceeded = 0;
 		if (ui16_wheel_speed_x10 > speed_limit_high) {
@@ -1436,7 +1526,7 @@ static void apply_speed_limit(void)
 		}
 		
         // set battery current target
-        ui8_adc_battery_current_target = (uint8_t) map_ui16(ui16_wheel_speed_x10,
+	ui8_adc_battery_current_target = (uint8_t) map_ui16(ui16_wheel_speed_x10,
                 speed_limit_low,
                 speed_limit_high,
                 ui8_adc_battery_current_target,
@@ -2478,12 +2568,12 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 		ui8_temp = ui8_rx_buffer[5];
 		// lights state
 		ui8_lights_state = ui8_temp & 1;
-		// walk assist
-		uint8_t ui8_walk_assist = (ui8_temp & 2) >> 1;
-		// assist level flag
+		// walk assist flag (bit1)
+		uint8_t ui8_walk_assist_flag_local = (ui8_temp & 2) >> 1;
+		// assist level flag (bit2)
 		ui8_assist_level_flag = (ui8_temp & 4) >> 2;
-		// cruise enabled
-		uint8_t ui8_cruise_enabled = (ui8_temp & 8) >> 3;
+		// cruise enabled flag (bit3)
+		uint8_t ui8_cruise_enabled_local = (ui8_temp & 8) >> 3;
 		// startup assist
 		ui8_startup_assist_flag = (ui8_temp & 16) >> 4;
 		// throttle enabled
@@ -2504,14 +2594,37 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 			uint8_t ui8_adc_battery_current_max_temp_1 =
 			(uint16_t)(ui8_battery_current_max * (uint8_t)100) / (uint16_t)BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100;
 
-			// (power-based cap intentionally disabled)
-			// uint32_t ui32_battery_current_max_x100 =
-			//     ((uint32_t) ui8_target_battery_max_power_div25 * 2500000U) / ui16_battery_voltage_filtered_x1000;
-			// uint8_t ui8_adc_battery_current_max_temp_2 =
-			//     ui32_battery_current_max_x100 / BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100;
-
+			#if DISPLAY_BACKEND == DISPLAY_BACKEND_EKD01
+			// EKD01 legal/offroad enforcement (reversed mapping):
+			// - Lights OFF => STREET: clamp power to <= 250 W (div25 <= 10) and choose MIN(current_from_power, current_from_amps)
+			// - Lights ON  => OFFROAD: force power target to 2000 W (div25 = 80) and choose MAX(power, amps) for higher ceiling
+			uint8_t div25_enforced;
+			if (!ui8_lights_state) { // STREET (legal)
+				div25_enforced = ui8_target_battery_max_power_div25;
+				if (div25_enforced > 10) { div25_enforced = 10; } // 10*25W = 250 W
+			} else { // OFFROAD
+				div25_enforced = 80; // 80*25W = 2000 W unconditional
+			}
+			uint32_t ui32_battery_current_max_x100 = 0u;
+			if (ui16_battery_voltage_filtered_x1000) {
+				ui32_battery_current_max_x100 = ((uint32_t) div25_enforced * 2500000u) / ui16_battery_voltage_filtered_x1000; // (div25*25W)*1000 / V(mV)
+			}
+			uint8_t ui8_adc_battery_current_max_temp_2 = (ui32_battery_current_max_x100 > 0)
+				? (uint8_t)(ui32_battery_current_max_x100 / (uint32_t)BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100)
+				: ui8_adc_battery_current_max_temp_1; // fallback if voltage not yet valid
+			if (!ui8_lights_state) { // STREET: choose tighter limit
+				ui8_adc_battery_current_max = (ui8_adc_battery_current_max_temp_2 < ui8_adc_battery_current_max_temp_1)
+					? ui8_adc_battery_current_max_temp_2
+					: ui8_adc_battery_current_max_temp_1;
+			} else { // OFFROAD: choose larger limit
+				ui8_adc_battery_current_max = (ui8_adc_battery_current_max_temp_2 > ui8_adc_battery_current_max_temp_1)
+					? ui8_adc_battery_current_max_temp_2
+					: ui8_adc_battery_current_max_temp_1;
+			}
+			#else
 			// force amps-only cap
 			ui8_adc_battery_current_max = ui8_adc_battery_current_max_temp_1;
+			#endif
 		}
 			// set max motor phase current
 			ui16_temp = (uint16_t)(ui8_adc_battery_current_max * ADC_10_BIT_MOTOR_PHASE_CURRENT_MAX);
@@ -2528,11 +2641,11 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 		ui8_walk_assist_parameter = ui8_rx_buffer[7];
 		
 		// riding mode
-		if ((ui8_walk_assist)&&(ui16_wheel_speed_x10 < WALK_ASSIST_THRESHOLD_SPEED_X10)) {
+		if ((ui8_walk_assist_flag_local)&&(ui16_wheel_speed_x10 < WALK_ASSIST_THRESHOLD_SPEED_X10)) {
 			// enable walk assist depending on speed
 			ui8_riding_mode = WALK_ASSIST_MODE;
 		}
-		else if ((ui8_cruise_enabled)&& (ui16_wheel_speed_x10 > CRUISE_THRESHOLD_SPEED_X10)) {
+		else if ((ui8_cruise_enabled_local)&& (ui16_wheel_speed_x10 > CRUISE_THRESHOLD_SPEED_X10)) {
 			if (((ui8_cruise_legal)&&(ui8_pedal_cadence_RPM))||(!ui8_cruise_legal)) {
 				// enable cruise function depending on speed
 				ui8_riding_mode = CRUISE_MODE;
@@ -2541,12 +2654,18 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 		else {
 			ui8_riding_mode = ui8_rx_buffer[8];
 		}
-		if (!ui8_walk_assist) {
+		if (!ui8_walk_assist_flag_local) {
 			// reset walk assist speed flag
 			ui8_walk_assist_speed_flag = 0;
 		}
 		// wheel max speed
 		ui8_wheel_speed_max = ui8_rx_buffer[9];
+		#if DISPLAY_BACKEND == DISPLAY_BACKEND_EKD01
+		// In STREET (lights ON), enforce <= 25 km/h limit regardless of display-sent value
+		if (ui8_lights_state) {
+			if (ui8_wheel_speed_max > 25) { ui8_wheel_speed_max = 25; }
+		}
+		#endif
 
 		// optional ADC function, temperature sensor or throttle or not in use
 		ui8_optional_ADC_function = ui8_rx_buffer[10];
@@ -2631,7 +2750,7 @@ static void communications_process_packages(uint8_t ui8_frame_type)
 
 		// first 8 bits of adc_motor_current
 		//ui8_tx_buffer[26] = (uint8_t) (ui16_adc_battery_current & 0xff);
-		ui8_tx_buffer[26] = ui8_adc_battery_current_filtered;
+		ui8_tx_buffer[26] = (uint8_t)(ui16_adc_battery_current_filtered & 0xFF); // truncate for legacy frame
 	  
 		ui8_len += 24;
 		break;

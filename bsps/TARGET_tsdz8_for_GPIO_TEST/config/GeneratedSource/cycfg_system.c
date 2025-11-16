@@ -4,7 +4,7 @@
  * Description:
  * System configuration
  * This file was automatically generated and should not be modified.
- * Configurator Backend 3.30.0
+ * Configurator Backend 3.50.0
  * device-db 4.20.0.7450
  * mtb-xmclib-cat3 4.4.0.4715
  *
@@ -34,6 +34,8 @@
 #define CLOCK_FDIV_I 1U
 #define CLOCK_FDIV_F 0U
 #define CLOCK_RTCCLK_SEL XMC_SCU_CLOCK_RTCCLKSRC_DCO2
+
+void SystemCoreClockSetup(void);
 
 void SystemCoreClockSetup(void)
 {

@@ -6,6 +6,18 @@
 
 
 
+// --- Experimental: test5-style Hall mailbox (gated) ---
+#if USE_TEST5_HALL
+typedef struct {
+	uint16_t tick;    // Hall timer tick at last edge (HALL_COUNTER_FREQ)
+	uint8_t  pattern; // 3-bit Hall state (1..6), 0/7 invalid
+	uint8_t  seq;     // Monotonic sequence to avoid missed edges
+} hall_mailbox_t;
+
+extern volatile hall_mailbox_t g_hall_mb;
+#endif
+
+
 // copied from TSDZ2
 // motor states
 #define BLOCK_COMMUTATION 			            0
@@ -59,6 +71,8 @@ extern volatile uint8_t ui8_battery_SOC_reset_flag;
 // added by ms because used in ebike_app.c
 extern volatile uint8_t ui8_g_foc_angle;
 extern uint8_t ui8_foc_angle_multiplicator;
+// Calibrated, clamped legacy 10-bit phase current used for protections/telemetry
+extern volatile uint16_t ui16_adc_motor_phase_current;
 
 // added by mstrens because defined in ebike_app.c and used in motor.c
 extern uint8_t ui8_adc_battery_overcurrent;

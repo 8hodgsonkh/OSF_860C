@@ -3,7 +3,7 @@
 [GENERAL]
   aATEModuleSel[24] = 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
   ConnectMode = 0
-  CurrentFile = "/home/haz/Documents/tsdz8haztesting/860c/build/last_config/mtb-example-xmc-gpio-toggle.hex"
+  CurrentFile = "/home/haz/Documents/tsdz8haztesting/860c/Hazzas_fun_build/5.1-phase-amp-reading-tweak.hex"
   DataFileSAddr = 0x00000000
   GUIMode = 0
   HostName = ""

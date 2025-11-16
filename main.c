@@ -26,6 +26,8 @@
 
 #include "motor.h"
 #include "ebike_app.h"
+// EKD01 defaults overlay
+#include "src/config/ekd01_defaults.h"
 //#include "foc_motor_control.h"
 //#include "eeprom.h"
 
@@ -101,7 +103,7 @@ extern volatile uint16_t debug_time_ccu8_irq1c; // to debug time in irq0 CCU8 (s
 extern volatile uint16_t debug_time_ccu8_irq1d; // to debug time in irq0 CCU8 (should be less than 25usec; 1 = 4 usec )
 extern volatile uint16_t debug_time_ccu8_irq1e; // to debug time in irq0 CCU8 (should be less than 25usec; 1 = 4 usec )
 
-extern volatile uint8_t ui8_adc_battery_current_filtered;
+extern volatile uint16_t ui16_adc_battery_current_filtered;
 extern uint8_t ui8_battery_current_filtered_x10;
 extern uint16_t ui16_display_data_factor; 
 extern volatile uint8_t ui8_g_foc_angle;
@@ -115,6 +117,7 @@ extern volatile uint16_t ui16_adc_motor_phase_current_max;
 extern volatile uint16_t ui16_hall_counter_total;
 extern volatile uint16_t ui16_adc_voltage;
 extern volatile uint16_t ui16_adc_voltage_cut_off;
+extern uint16_t ui16_motor_speed_erps; // from ebike_app.c
 
 extern uint8_t hall_reference_angle;
 extern uint8_t ui8_wheel_speed_simulate ;  //added by mstrens to simulate a fixed speed whithout having a speed sensor 
@@ -195,6 +198,11 @@ int main(void)
     {
         CY_ASSERT(0);
     }
+    // Debug safety: stop watchdog after BSP init if running under J-Link to avoid resets while halted.
+    // Outputs are already put into SAFE_STOP suspend mode below so halting is electrically safe.
+    #if (DEBUG_ON_JLINK == 1)
+    XMC_WDT_Stop();
+    #endif
     
     
 #if (USE_FOC_CONTROL == 1)
@@ -288,6 +296,11 @@ int main(void)
     //m_configuration_init();
     // add some initialisation in ebike_app.init
     //ebike_app_init();
+
+#if (DISPLAY_BACKEND == DISPLAY_BACKEND_EKD01)
+    // Apply EKD01 runtime defaults after config load and before any display/backend work
+    ekd01_defaults_apply(false);
+#endif
     // added by Mstrens
 	hall_reference_angle =  (uint8_t) DEFAULT_HALL_REFERENCE_ANGLE; //to do = add a small offset like in non 860c version
 	//hall_reference_angle = 66;
@@ -366,8 +379,14 @@ int main(void)
     }
     
     //start = system_ticks;
-   XMC_WDT_Start();
-   XMC_WDT_Service();
+    // Avoid watchdog resets while halted in the debugger.
+    // When DEBUG_ON_JLINK is enabled, don't start WDT so single-step/halts don't trigger a reset.
+    #if (DEBUG_ON_JLINK == 1)
+    // XMC_WDT_Start(); // disabled during debug to prevent SIGTRAP/reset loops
+    #else
+    XMC_WDT_Start();
+    #endif
+    XMC_WDT_Service();
 
    // init the clock timer
    last_clock_ticks = XMC_CCU4_SLICE_GetTimerValue(HALL_SPEED_TIMER_HW) ; 
@@ -480,7 +499,7 @@ int main(void)
         }
 
 //        if( take_action(2, 500)) SEGGER_RTT_printf(0,"Adc current= %u adcX8=%u  current_Ax10=%u  factor=%u\r\n", 
-//            (unsigned int) ui8_adc_battery_current_filtered ,
+//            (unsigned int) ui16_adc_battery_current_filtered ,
 //            (unsigned int) ui16_adc_battery_current_acc_X8 ,
 //            (unsigned int) ui8_battery_current_filtered_x10 , 
 //            (unsigned int) ui16_display_data_factor
@@ -493,7 +512,7 @@ int main(void)
             (unsigned int) ui8_controller_duty_cycle_target,
             (unsigned int) ui8_g_duty_cycle,
             (unsigned int) ui8_controller_adc_battery_current_target,
-            (unsigned int) ui8_adc_battery_current_filtered,
+            (unsigned int) ui16_adc_battery_current_filtered,
             (unsigned int) ui8_throttle_adc_in,
             (unsigned int) ui16_motor_speed_erps,
             (unsigned int) ui8_g_foc_angle
@@ -508,7 +527,7 @@ int main(void)
         //if( take_action(6, 5000)) {
             SEGGER_RTT_printf(0,
             "c10b=%u  dc=%u erps=%u t360=%u  best1=%u best2=%u best3=%u best4=%u best5=%u best6=%u\r\n",
-                (unsigned int) ui8_adc_battery_current_filtered,
+                (unsigned int) ui16_adc_battery_current_filtered,
                 (unsigned int) ui8_g_duty_cycle,
                 (unsigned int) ui16_motor_speed_erps,
                 (unsigned int) ui16_hall_counter_total,

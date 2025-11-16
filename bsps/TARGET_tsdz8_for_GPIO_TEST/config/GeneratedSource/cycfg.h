@@ -5,7 +5,7 @@
  * Simple wrapper containing all generated files and function to initialize
  * all generated code.
  * This file was automatically generated and should not be modified.
- * Configurator Backend 3.30.0
+ * Configurator Backend 3.50.0
  * device-db 4.20.0.7450
  * mtb-xmclib-cat3 4.4.0.4715
  *

@@ -1,0 +1,9 @@
+cycfg_notices.h
+cycfg_peripherals.c
+cycfg_peripherals.h
+cycfg_pins.c
+cycfg_pins.h
+cycfg_routing.c
+cycfg_routing.h
+cycfg_system.c
+cycfg_system.h

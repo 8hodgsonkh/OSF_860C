@@ -11,6 +11,8 @@
 
 //#include <stdint.h>
 #include "main.h"
+// (Optional) DISPLAY_BACKEND macros may be defined via build system. We avoid including
+// backend headers here to keep dependencies minimal.
 
 // moved from ebike_app.c because used also in main.c
 // from v.1.1.0
@@ -107,6 +109,62 @@ uint16_t read_battery_soc(void);
 
 //static void calc_oem_wheel_speed(void);
 //static void ebike_control_lights(void);
+
+
+#if defined(DISPLAY_BACKEND) && (DISPLAY_BACKEND == 1)
+// EKD01 boot-time controller defaults interface
+typedef struct {
+  // Speed / wheel geometry
+  uint16_t wheel_perimeter_mm;                    // e.g., 2050
+  uint8_t  wheel_speed_max_kmh;                   // off-road/default cap, e.g., 60
+  uint8_t  street_mode_speed_kmh;                 // enforced when lights ON, e.g., 25
+
+  // Battery & power safety
+  uint16_t battery_low_voltage_cut_off_x10;       // e.g., 400 => 40.0V
+  uint8_t  battery_overcurrent_delay;             // 0 disables overcurrent latch
+
+  // Assist-level and riding mode
+  uint8_t  assist_level_flag;                     // 1 enables motor gating from start
+  uint8_t  riding_mode;                           // POWER_ASSIST_MODE, TORQUE_ASSIST_MODE, ...
+  uint8_t  riding_mode_parameter;                 // assist multiplier (typ 50)
+
+  // Smooth start / startup assist
+  uint8_t  smooth_start_enabled;                  // 0/1
+  uint8_t  smooth_start_counter_set;              // ramp length; 0 ok if disabled
+
+  // Torque sensor tunables
+  uint8_t  adc_pedal_torque_range_adj;            // 0..40
+  uint8_t  adc_pedal_torque_angle_adj;            // 0..40
+  uint8_t  pedal_torque_step_x100;                // ui8_pedal_torque_per_10_bit_ADC_step_x100
+
+  // Throttle calibration
+  uint8_t  throttle_min;                          // ADC counts (8-bit scaled)
+  uint8_t  throttle_max;                          // ADC counts (8-bit scaled)
+  uint8_t  throttle_legal;                        // 0/1 gate for cadence requirement
+
+  // Walk assist & misc
+  uint8_t  walk_assist_parameter;                 // 0 by default
+  uint8_t  assist_without_pedal_rotation_enabled; // 0/1
+  uint8_t  assist_without_pedal_rotation_threshold; // ADC threshold delta
+
+  // eMTB / hybrid specifics
+  uint8_t  eMTB_based_on_power;                   // 0 torque / 1 power
+  uint8_t  hybrid_torque_parameter;               // 0 default
+} ekd01_controller_defaults_t;
+
+// Apply EKD01 controller defaults safely to internal statics
+void ekd01_controller_apply_defaults(const ekd01_controller_defaults_t *d);
+#endif
+
+// -------------------------------------------------------------
+// Fatal grace window helper
+// -------------------------------------------------------------
+// Timestamp captured at motor init completion (controller time base ms)
+extern volatile uint32_t g_motor_init_done_ms;
+// Count of fatal events suppressed during grace window (diagnostic)
+extern uint8_t ui8_deferred_fatal_events;
+// Returns true while grace window is active
+bool fatal_grace_active(void);
 
 
 

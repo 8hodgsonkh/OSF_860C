@@ -1,189 +1,249 @@
 {
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "Build",
-            "type": "process",
-            "command": "bash",
-            "args": [
-                "--norc",
-                "-c",
-                "make -j build "
-            ],
-            "windows": {
-                "command": "${config:modustoolbox.toolsPath}/modus-shell/bin/bash.exe",
-                "args": [
-                    "--norc",
-                    "-c",
-                    "export PATH=/bin:/usr/bin:$PATH ; ${config:modustoolbox.toolsPath}/modus-shell/bin/make.exe -j build "
-                ]
-            },
-            "problemMatcher": "$gcc",
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            }
-        },
-        {
-            "label": "Rebuild",
-            "dependsOrder": "sequence",
-            "dependsOn": [
-                "Clean",
-                "Build"
-            ],
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            }
-        },
-        {
-            "label": "Clean",
-            "type": "process",
-            "command": "bash",
-            "args": [
-                "--norc",
-                "-c",
-                "make clean "
-            ],
-            "windows": {
-                "command": "${config:modustoolbox.toolsPath}/modus-shell/bin/bash.exe",
-                "args": [
-                    "--norc",
-                    "-c",
-                    "export PATH=/bin:/usr/bin:$PATH ; ${config:modustoolbox.toolsPath}/modus-shell/bin/make.exe clean "
-                ]
-            }
-        },
-        {
-            "label": "Tool: Library Manager",
-            "type": "process",
-            "command": "bash",
-            "args": [
-                "--norc",
-                "-c",
-                "make modlibs MTB__JOB_BACKGROUND="
-            ],
-            "windows": {
-                "command": "${config:modustoolbox.toolsPath}/modus-shell/bin/bash.exe",
-                "args": [
-                    "--norc",
-                    "-c",
-                    "export PATH=/bin:/usr/bin:$PATH ; ${config:modustoolbox.toolsPath}/modus-shell/bin/make.exe modlibs MTB__JOB_BACKGROUND="
-                ]
-            }
-        },
-        {
-            "label": "Erase",
-            "type": "process",
-            "command": "bash",
-            "args": [
-                "--norc",
-                "-c",
-                "make erase "
-            ],
-            "windows": {
-                "command": "${config:modustoolbox.toolsPath}/modus-shell/bin/bash.exe",
-                "args": [
-                    "--norc",
-                    "-c",
-                    "export PATH=/bin:/usr/bin:$PATH ; ${config:modustoolbox.toolsPath}/modus-shell/bin/make.exe erase "
-                ]
-            },
-            "hide": true
-        },
-        {
-            "label": "Build & Program",
-            "type": "process",
-            "command": "bash",
-            "args": [
-                "--norc",
-                "-c",
-                "make -j program "
-            ],
-            "windows": {
-                "command": "${config:modustoolbox.toolsPath}/modus-shell/bin/bash.exe",
-                "args": [
-                    "--norc",
-                    "-c",
-                    "export PATH=/bin:/usr/bin:$PATH ; ${config:modustoolbox.toolsPath}/modus-shell/bin/make.exe -j program "
-                ]
-            },
-            "problemMatcher": "$gcc",
-            "hide": true
-        },
-        {
-            "label": "Quick Program",
-            "type": "process",
-            "command": "bash",
-            "args": [
-                "--norc",
-                "-c",
-                "make qprogram "
-            ],
-            "windows": {
-                "command": "${config:modustoolbox.toolsPath}/modus-shell/bin/bash.exe",
-                "args": [
-                    "--norc",
-                    "-c",
-                    "export PATH=/bin:/usr/bin:$PATH ; ${config:modustoolbox.toolsPath}/modus-shell/bin/make.exe qprogram "
-                ]
-            },
-            "hide": true
-        },
-        {
-            "label": "Rebuild/Ninja",
-            "dependsOrder": "sequence",
-            "dependsOn": [
-                "Clean",
-                "Build/Ninja"
-            ],
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            }
-        },
-        {
-            "label": "Build/Ninja",
-            "type": "process",
-            "command": "bash",
-            "args": [
-                "--norc",
-                "-c",
-                "make build NINJA=1"
-            ],
-            "windows": {
-                "command": "${config:modustoolbox.toolsPath}/modus-shell/bin/bash.exe",
-                "args": [
-                    "--norc",
-                    "-c",
-                    "export PATH=/bin:/usr/bin:$PATH ; ${config:modustoolbox.toolsPath}/modus-shell/bin/make.exe build NINJA=1"
-                ]
-            },
-            "problemMatcher": "$gcc",
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            }
-        },
-        {
-            "label": "Build/Ninja & Program",
-            "type": "process",
-            "command": "bash",
-            "args": [
-                "--norc",
-                "-c",
-                "make program NINJA=1"
-            ],
-            "windows": {
-                "command": "${config:modustoolbox.toolsPath}/modus-shell/bin/bash.exe",
-                "args": [
-                    "--norc",
-                    "-c",
-                    "export PATH=/bin:/usr/bin:$PATH ; ${config:modustoolbox.toolsPath}/modus-shell/bin/make.exe program NINJA=1"
-                ]
-            },
-            "problemMatcher": "$gcc",
-            "hide": true
-        }
-    ]
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build",
+			"type": "process",
+			"command": "bash",
+			"args": [
+				"--norc",
+				"-c",
+				"make -j build "
+			],
+			"windows": {
+				"command": "${config:modustoolbox.toolsPath}/modus-shell/bin/bash.exe",
+				"args": [
+					"--norc",
+					"-c",
+					"export PATH=/bin:/usr/bin:$PATH ; ${config:modustoolbox.toolsPath}/modus-shell/bin/make.exe -j build "
+				]
+			},
+			"problemMatcher": "$gcc",
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			}
+		},
+		{
+			"label": "Rebuild",
+			"dependsOrder": "sequence",
+			"dependsOn": [
+				"Clean",
+				"Build"
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			}
+		},
+		{
+			"label": "Clean",
+			"type": "process",
+			"command": "bash",
+			"args": [
+				"--norc",
+				"-c",
+				"make clean "
+			],
+			"windows": {
+				"command": "${config:modustoolbox.toolsPath}/modus-shell/bin/bash.exe",
+				"args": [
+					"--norc",
+					"-c",
+					"export PATH=/bin:/usr/bin:$PATH ; ${config:modustoolbox.toolsPath}/modus-shell/bin/make.exe clean "
+				]
+			}
+		},
+		{
+			"label": "Tool: Library Manager",
+			"type": "process",
+			"command": "bash",
+			"args": [
+				"--norc",
+				"-c",
+				"make modlibs MTB__JOB_BACKGROUND="
+			],
+			"windows": {
+				"command": "${config:modustoolbox.toolsPath}/modus-shell/bin/bash.exe",
+				"args": [
+					"--norc",
+					"-c",
+					"export PATH=/bin:/usr/bin:$PATH ; ${config:modustoolbox.toolsPath}/modus-shell/bin/make.exe modlibs MTB__JOB_BACKGROUND="
+				]
+			}
+		},
+		{
+			"label": "Erase",
+			"type": "process",
+			"command": "bash",
+			"args": [
+				"--norc",
+				"-c",
+				"make erase "
+			],
+			"windows": {
+				"command": "${config:modustoolbox.toolsPath}/modus-shell/bin/bash.exe",
+				"args": [
+					"--norc",
+					"-c",
+					"export PATH=/bin:/usr/bin:$PATH ; ${config:modustoolbox.toolsPath}/modus-shell/bin/make.exe erase "
+				]
+			},
+			"hide": true
+		},
+		{
+			"label": "Build & Program",
+			"type": "process",
+			"command": "bash",
+			"args": [
+				"--norc",
+				"-c",
+				"make -j program "
+			],
+			"windows": {
+				"command": "${config:modustoolbox.toolsPath}/modus-shell/bin/bash.exe",
+				"args": [
+					"--norc",
+					"-c",
+					"export PATH=/bin:/usr/bin:$PATH ; ${config:modustoolbox.toolsPath}/modus-shell/bin/make.exe -j program "
+				]
+			},
+			"problemMatcher": "$gcc",
+			"hide": true
+		},
+		{
+			"label": "Quick Program",
+			"type": "process",
+			"command": "bash",
+			"args": [
+				"--norc",
+				"-c",
+				"make qprogram "
+			],
+			"windows": {
+				"command": "${config:modustoolbox.toolsPath}/modus-shell/bin/bash.exe",
+				"args": [
+					"--norc",
+					"-c",
+					"export PATH=/bin:/usr/bin:$PATH ; ${config:modustoolbox.toolsPath}/modus-shell/bin/make.exe qprogram "
+				]
+			},
+			"hide": true
+		},
+		{
+			"label": "Rebuild/Ninja",
+			"dependsOrder": "sequence",
+			"dependsOn": [
+				"Clean",
+				"Build/Ninja"
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			}
+		},
+		{
+			"label": "Build/Ninja",
+			"type": "process",
+			"command": "bash",
+			"args": [
+				"--norc",
+				"-c",
+				"make build NINJA=1"
+			],
+			"windows": {
+				"command": "${config:modustoolbox.toolsPath}/modus-shell/bin/bash.exe",
+				"args": [
+					"--norc",
+					"-c",
+					"export PATH=/bin:/usr/bin:$PATH ; ${config:modustoolbox.toolsPath}/modus-shell/bin/make.exe build NINJA=1"
+				]
+			},
+			"problemMatcher": "$gcc",
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			}
+		},
+		{
+			"label": "Build/Ninja & Program",
+			"type": "process",
+			"command": "bash",
+			"args": [
+				"--norc",
+				"-c",
+				"make program NINJA=1"
+			],
+			"windows": {
+				"command": "${config:modustoolbox.toolsPath}/modus-shell/bin/bash.exe",
+				"args": [
+					"--norc",
+					"-c",
+					"export PATH=/bin:/usr/bin:$PATH ; ${config:modustoolbox.toolsPath}/modus-shell/bin/make.exe program NINJA=1"
+				]
+			},
+			"problemMatcher": "$gcc",
+			"hide": true
+		},
+		{
+			"label": "Build",
+			"type": "shell",
+			"command": "bash",
+			"args": [
+				"--norc",
+				"-c",
+				"make -j build "
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build",
+			"type": "shell",
+			"command": "bash",
+			"args": [
+				"--norc",
+				"-c",
+				"make -j build "
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build (debug toggled)",
+			"type": "shell",
+			"command": "bash",
+			"args": [
+				"--norc",
+				"-c",
+				"make -j build "
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build (fix extern)",
+			"type": "shell",
+			"command": "bash",
+			"args": [
+				"--norc",
+				"-c",
+				"make -j build "
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		}
+	]
 }
